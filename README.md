@@ -1,6 +1,6 @@
 # 🕵️‍♂️ PhantomCurl
 
-[![CI Status](https://img.shields.io/github/actions/workflow/status/your_username/phantom-curl/ci.yml?branch=main)](https://github.com/your_username/phantom-curl/actions)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/YOUR_USERNAME/phantom-curl/ci.yml?branch=main)](https://github.com/YOUR_USERNAME/phantom-curl/actions)
 [![PyPI version](https://img.shields.io/pypi/v/phantom-curl.svg)](https://pypi.org/project/phantom-curl/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/phantom-curl.svg)](https://pypi.org/project/phantom-curl/)
 
@@ -30,7 +30,7 @@ from phantom_curl import PhantomClient
 
 with PhantomClient(impersonate="chrome110") as client:
     # Load the page (with Chrome impersonation)
-    response = client.get("https://spys.one/en/anonymous-proxy-list/")
+    response = client.get("https://example.com")
     
     # Evaluate a math expression
     print(client.evaluate("2 ** 10"))  # 1024
@@ -43,3 +43,28 @@ with PhantomClient(impersonate="chrome110") as client:
     
     # Read localStorage
     storage = client.get_local_storage()
+```
+
+## 📦 Installation
+
+```bash
+pip install phantom-curl
+```
+
+## 🏗️ Architecture
+
+PhantomCurl consists of four layers:
+1. **Network Layer:** A wrapper over `curl_cffi` to execute requests with the required TLS fingerprint.
+2. **Environment Layer:** QuickJS + Domino sandbox that creates an isolated browser environment.
+3. **Bridge Layer:** Intercepts `fetch`/`XHR` from JS and routes them into the Python network layer.
+4. **Stealth Layer:** Injection module to bypass anti-bot checks.
+
+Read more in the [architecture documentation](docs/architecture.md).
+
+## 🤝 Contributing
+
+We are open to suggestions! Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
