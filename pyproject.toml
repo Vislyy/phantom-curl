@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "phantom-curl"
+version = "0.1.0"
+description = "A stealthy web scraping library with built-in JS engine and TLS fingerprint impersonation"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [
+    { name = "Vislyy, email = "visslyxd@gmail.com" }
+]
+keywords = ["scraping", "curl-cffi", "quickjs", "anti-detect", "cloudflare-bypass", "headless"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: WWW/HTTP",
+]
+
+dependencies = [
+    "curl_cffi>=0.6.0",
+    "quickjs>=1.19.0",
+    "lxml>=4.9.0",
+]
+
+[project.optional-dependencies]
+captcha = ["2captcha-python>=1.2.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
