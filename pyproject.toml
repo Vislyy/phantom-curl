@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {file = "LICENSE"}
 authors = [
-    { name = "Vislyy, email = "visslyxd@gmail.com" }
+    { name = "Vislyy", email = "visslyxd@gmail.com" }
 ]
 keywords = ["scraping", "curl-cffi", "quickjs", "anti-detect", "cloudflare-bypass", "headless"]
 classifiers = [

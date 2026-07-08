@@ -1,0 +1,1 @@
+from quickjs import Function
