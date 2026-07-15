@@ -83,6 +83,19 @@ class NetworkError(PhantomError):
     timeouts, requests rejected by the server, etc.
     """
 
+class HTTPError(NetworkError):
+    """
+    Raised for HTTP response status codes in the 4xx or 5xx range.
+
+    Attributes:
+        status_code: The HTTP status code of the response.
+        url: The URL that was requested.
+    """
+
+    def __init__(self, message: str, status_code: Optional[int] = None, url: Optional[str] = None) -> None:
+        self.status_code = status_code
+        self.url = url
+        super().__init__(message)
 
 class TLSRejectError(NetworkError):
     """

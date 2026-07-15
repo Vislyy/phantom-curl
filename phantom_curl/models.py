@@ -23,7 +23,7 @@ from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
 from phantom_curl.utils import CaseInsensitiveDict
-
+from phantom_curl.exceptions import HTTPError
 
 @dataclass(frozen=True, slots=True)
 class Cookie:
@@ -92,16 +92,26 @@ class RequestOptions:
             module inside this file and in code that imports this class.
         timeout: Request timeout in seconds.
         allow_redirects: Whether to automatically follow HTTP redirects.
+        verify: Either a boolean, in which case it controls whether we verify
+            the server's TLS/SSL certificate, or a string, in which case it 
+            must be a path to a CA bundle to use. Defaults to True.
+        proxy: A dictionary mapping protocol schemes (e.g., "http", "https")
+            to the URL of the proxy server to route the request through (e.g.,
+            {"http": "http://10.10.1.10:3128"}).
     """
 
     method: str
     url: str
     headers: Mapping[str, str] = field(default_factory=dict)
     params: Optional[Mapping[str, str]] = None
+    cookies: Optional[Mapping[str, str]] = None
     data: Optional[Any] = None
     json_body: Optional[Any] = None
     timeout: float = 30.0
     allow_redirects: bool = True
+    verify: bool = True
+    proxy: Optional[ProxyConfig] = None
+    proxies: Optional[Mapping[str, ProxyConfig]] = None
 
     def __post_init__(self) -> None:
         """
@@ -115,6 +125,15 @@ class RequestOptions:
         object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
         if self.params is not None:
             object.__setattr__(self, "params", MappingProxyType(dict(self.params)))
+
+        if self.proxy is not None and self.proxies is not None:
+            raise ValueError(
+                "Cannot set both 'proxy' and 'proxies' at the same time. "
+                "Use 'proxy' for a single proxy applied to all protocols, "
+                "or 'proxies' for per-protocol proxy configuration."
+            )
+        if self.proxies is not None:
+            object.__setattr__(self, "proxies", MappingProxyType(dict(self.proxies)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +209,21 @@ class Response:
     def ok(self) -> bool:
         """Returns True if the response status code indicates success (< 400)."""
         return self.status_code < 400
+
+    def raise_for_status(self) -> None:
+        """
+        Raises an HTTPError if the response status code indicates an error
+        (4xx or 5xx).
+
+        Raises:
+            HTTPError: If the response status code is 4xx or 5xx.
+        """
+        if 400 <= self.status_code < 600:
+            raise HTTPError(
+                f"HTTP request to {self.url} failed with status code {self.status_code}",
+                status_code=self.status_code,
+                url=self.url
+            )
 
     def json(self) -> Any:
         """
@@ -286,3 +320,38 @@ class StealthConfig:
         object.__setattr__(
             self, "extra_headers", MappingProxyType(dict(self.extra_headers))
         )
+
+@dataclass(frozen=True, slots=True)
+class ProxyConfig:
+    """
+    Immutable configuration for a single proxy server.
+
+    Attributes:
+        host: Proxy server hostname or IP address.
+        port: Proxy server port.
+        username: Username for proxy authentication, or None if the
+            proxy requires no authentication.
+        password: Password for proxy authentication, or None.
+        scheme: Proxy protocol — "http", "https", or "socks5".
+    """
+    host: str
+    port: int
+    username: Optional[str] = None
+    password: Optional[str] = None
+    scheme: str = "http"  # "http", "https", "socks5"
+
+    _VALID_SCHEMES = frozenset({"http", "https", "socks4", "socks5", "socks5h"})
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scheme", self.scheme.lower())
+        if self.scheme not in self._VALID_SCHEMES:
+            raise ValueError(
+                f"Invalid proxy scheme: {self.scheme!r}. "
+                f"Must be one of: {', '.join(sorted(self._VALID_SCHEMES))}"
+        )
+
+    @property
+    def url(self):
+        """Builds the full proxy URL, e.g. 'http://user:pass@host:port'."""
+        auth = f"{self.username}:{self.password}@" if self.username else ""
+        return f"{self.scheme}://{auth}{self.host}:{self.port}"

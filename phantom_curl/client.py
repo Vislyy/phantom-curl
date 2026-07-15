@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Optional, Mapping, Any
 
-from phantom_curl.models import StealthConfig, Response, RequestOptions
+from phantom_curl.models import StealthConfig, Response, RequestOptions, ProxyConfig
 from phantom_curl.network.session import NetworkSession
 
 class PhantomClient:
@@ -64,10 +64,14 @@ class PhantomClient:
         url: str,
         headers: Optional[Mapping[str, str]] = None,
         params: Optional[Mapping[str, Any]] = None,
+        cookies: Optional[Mapping[str, str]] = None,
         data: Optional[Any] = None,
         json: Optional[Any] = None,
         timeout: Optional[float] = None,
         allow_redirects: bool = True,
+        verify: bool = True,
+        proxy: Optional[ProxyConfig] = None,
+        proxies: Optional[Mapping[str, ProxyConfig]] = None
     ) -> RequestOptions:
         """
         Internal helper to build RequestOptions from the provided parameters.
@@ -77,10 +81,14 @@ class PhantomClient:
             url=url,
             headers=headers or {},
             params=params or {},
+            cookies=cookies or {},
             data=data,
             json_body=json,
             timeout=timeout,
             allow_redirects=allow_redirects,
+            verify=verify,
+            proxy=proxy,
+            proxies=proxies,
         )
 
     def get(
@@ -88,8 +96,12 @@ class PhantomClient:
         url: str,
         params: Optional[Mapping[str, Any]] = None,
         headers: Optional[Mapping[str, str]] = None,
+        cookies: Optional[Mapping[str, str]] = None,
         timeout: float = 30.0,
         allow_redirects: bool = True,
+        verify: bool = True,
+        proxy: Optional[ProxyConfig] = None,
+        proxies: Optional[Mapping[str, ProxyConfig]] = None
     ) -> Response:
         """
         Performs an HTTP GET request.
@@ -98,6 +110,7 @@ class PhantomClient:
             url: Target URL.
             params: Query string parameters.
             headers: Additional request headers.
+            cookies: Additional request cookies.
             timeout: Request timeout in seconds.
             allow_redirects: Whether to automatically follow HTTP redirects.
 
@@ -110,8 +123,12 @@ class PhantomClient:
             url=url,
             headers=headers,
             params=params,
+            cookies=cookies,
             timeout=timeout,
             allow_redirects=allow_redirects,
+            verify=verify,
+            proxy=proxy,
+            proxies=proxies
         )
         return self.network_session.request(options)
     
@@ -120,8 +137,12 @@ class PhantomClient:
         url: str,
         params: Optional[Mapping[str, Any]] = None,
         headers: Optional[Mapping[str, str]] = None,
+        cookies: Optional[Mapping[str, str]] = None,
         timeout: float = 30.0,
         allow_redirects: bool = True,
+        verify: bool = True,
+        proxy: Optional[ProxyConfig] = None,
+        proxies: Optional[Mapping[str, ProxyConfig]] = None,
     ) -> Response:
         """
         Performs an HTTP HEAD request.
@@ -130,6 +151,7 @@ class PhantomClient:
             url: Target URL.
             params: Query string parameters.
             headers: Additional request headers.
+            cookies: Additional request cookies.
             timeout: Request timeout in seconds.
             allow_redirects: Whether to automatically follow HTTP redirects.
         
@@ -142,8 +164,12 @@ class PhantomClient:
             url=url,
             headers=headers,
             params=params,
+            cookies=cookies,
             timeout=timeout,
             allow_redirects=allow_redirects,
+            verify=verify,
+            proxy=proxy,
+            proxies=proxies
         )
         return self.network_session.request(options)
     
@@ -152,8 +178,12 @@ class PhantomClient:
         url: str,
         params: Optional[Mapping[str, Any]] = None,
         headers: Optional[Mapping[str, str]] = None,
+        cookies: Optional[Mapping[str, str]] = None,
         timeout: float = 30.0,
         allow_redirects: bool = True,
+        verify: bool = True,
+        proxy: Optional[ProxyConfig] = None,
+        proxies: Optional[Mapping[str, ProxyConfig]] = None,
     ) -> Response:
         """
         Performs an HTTP OPTIONS request.
@@ -162,6 +192,7 @@ class PhantomClient:
             url: Target URL.
             params: Query string parameters.
             headers: Additional request headers.
+            cookies: Additional request cookies.
             timeout: Request timeout in seconds.
             allow_redirects: Whether to automatically follow HTTP redirects.
         
@@ -174,8 +205,12 @@ class PhantomClient:
             url=url,
             headers=headers,
             params=params,
+            cookies=cookies,
             timeout=timeout,
             allow_redirects=allow_redirects,
+            verify=verify,
+            proxy=proxy,
+            proxies=proxies
         )
         return self.network_session.request(options)
 
@@ -185,8 +220,12 @@ class PhantomClient:
         data: Optional[Any] = None,
         json: Optional[Any] = None,
         headers: Optional[Mapping[str, str]] = None,
+        cookies: Optional[Mapping[str, str]] = None,
         timeout: float = 30.0,
-        allow_redirects: bool = True,
+        allow_redirects: bool = False,
+        verify: bool = True,
+        proxy: Optional[ProxyConfig] = None,
+        proxies: Optional[Mapping[str, ProxyConfig]] = None,
     ) -> Response:
         """
         Performs an HTTP POST request.
@@ -196,6 +235,7 @@ class PhantomClient:
             data: Form data to send in the body of the request.
             json: JSON data to send in the body of the request.
             headers: Additional request headers.
+            cookies: Additional request cookies.
             timeout: Request timeout in seconds.
             allow_redirects: Whether to automatically follow HTTP redirects.
 
@@ -207,10 +247,14 @@ class PhantomClient:
             method="POST",
             url=url,
             headers=headers,
+            cookies=cookies,
             data=data,
             json=json,
             timeout=timeout,
             allow_redirects=allow_redirects,
+            verify=verify,
+            proxy=proxy,
+            proxies=proxies
         )
         return self.network_session.request(options)
     
@@ -220,8 +264,12 @@ class PhantomClient:
         data: Optional[Any] = None,
         json: Optional[Any] = None,
         headers: Optional[Mapping[str, str]] = None,
+        cookies: Optional[Mapping[str, str]] = None,
         timeout: float = 30.0,
         allow_redirects: bool = False,
+        verify: bool = True,
+        proxy: Optional[ProxyConfig] = None,
+        proxies: Optional[Mapping[str, ProxyConfig]] = None,
     ) -> Response:
         """
         Performs an HTTP PUT request.
@@ -231,6 +279,7 @@ class PhantomClient:
             data: Form data to send in the body of the request.
             json: JSON data to send in the body of the request.
             headers: Additional request headers.
+            cookies: Additional request cookies.
             timeout: Request timeout in seconds.
             allow_redirects: Whether to automatically follow HTTP redirects.
 
@@ -242,10 +291,14 @@ class PhantomClient:
             method="PUT",
             url=url,
             headers=headers,
+            cookies=cookies,
             data=data,
             json=json,
             timeout=timeout,
             allow_redirects=allow_redirects,
+            verify=verify,
+            proxy=proxy,
+            proxies=proxies
         )
         return self.network_session.request(options)
 
@@ -255,8 +308,12 @@ class PhantomClient:
         data: Optional[Any] = None,
         json: Optional[Any] = None,
         headers: Optional[Mapping[str, str]] = None,
+        cookies: Optional[Mapping[str, str]] = None,
         timeout: float = 30.0,
         allow_redirects: bool = False,
+        verify: bool = True,
+        proxy: Optional[ProxyConfig] = None,
+        proxies: Optional[Mapping[str, ProxyConfig]] = None,
     ) -> Response:
         """
         Performs an HTTP PATCH request.
@@ -266,6 +323,7 @@ class PhantomClient:
             data: Form data to send in the body of the request.
             json: JSON data to send in the body of the request.
             headers: Additional request headers.
+            cookies: Additional request cookies.
             timeout: Request timeout in seconds.
             allow_redirects: Whether to automatically follow HTTP redirects.
 
@@ -277,10 +335,14 @@ class PhantomClient:
             method="PATCH",
             url=url,
             headers=headers,
+            cookies=cookies,
             data=data,
             json=json,
             timeout=timeout,
             allow_redirects=allow_redirects,
+            verify=verify,
+            proxy=proxy,
+            proxies=proxies
         )
         return self.network_session.request(options)
     
@@ -288,8 +350,12 @@ class PhantomClient:
         self,
         url: str,
         headers: Optional[Mapping[str, str]] = None,
+        cookies: Optional[Mapping[str, str]] = None,
         timeout: float = 30.0,
         allow_redirects: bool = False,
+        verify: bool = True,
+        proxy: Optional[ProxyConfig] = None,
+        proxies: Optional[Mapping[str, ProxyConfig]] = None,
     ) -> Response:
         """
         Performs an HTTP DELETE request.
@@ -297,6 +363,7 @@ class PhantomClient:
         Args:
             url: Target URL.
             headers: Additional request headers.
+            cookies: Additional request cookies.
             timeout: Request timeout in seconds.
             allow_redirects: Whether to automatically follow HTTP redirects.
 
@@ -308,7 +375,19 @@ class PhantomClient:
             method="DELETE",
             url=url,
             headers=headers,
+            cookies=cookies,
             timeout=timeout,
             allow_redirects=allow_redirects,
+            verify=verify,
+            proxy=proxy,
+            proxies=proxies
         )
         return self.network_session.request(options)
+    
+    @property
+    def cookies(self) -> str:
+        """
+        Provides live, mutable access to the cookies stored in this
+        client's session.
+        """
+        return self.network_session.cookies
