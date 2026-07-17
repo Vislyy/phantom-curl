@@ -44,3 +44,4 @@ htmlcov/
 .mypy_cache/
 
 test.py
+test_domino.py
