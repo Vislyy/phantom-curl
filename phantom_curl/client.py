@@ -12,7 +12,10 @@ from __future__ import annotations
 from typing import Optional, Mapping, Any
 
 from phantom_curl.models import StealthConfig, Response, RequestOptions, ProxyConfig
+from phantom_curl.page import Page
+from phantom_curl.network.session_cookies import SessionCookies
 from phantom_curl.network.session import NetworkSession
+from phantom_curl.utils.request_options_builder import build_request_options
 
 class PhantomClient:
     """
@@ -38,13 +41,13 @@ class PhantomClient:
         """
         self.stealth_config = stealth_config or StealthConfig()
 
-        self.network_session = NetworkSession(stealth_config=self.stealth_config)
+        self._session = NetworkSession(stealth_config=self.stealth_config)
 
     def close(self) -> None:
         """
         Closes the underlying network session and releases resources.
         """
-        self.network_session.close()
+        self._session.close()
 
     def __enter__(self) -> PhantomClient:
         """
@@ -67,7 +70,7 @@ class PhantomClient:
         cookies: Optional[Mapping[str, str]] = None,
         data: Optional[Any] = None,
         json: Optional[Any] = None,
-        timeout: Optional[float] = None,
+        timeout: float = 30.0,
         allow_redirects: bool = True,
         verify: bool = True,
         proxy: Optional[ProxyConfig] = None,
@@ -76,14 +79,14 @@ class PhantomClient:
         """
         Internal helper to build RequestOptions from the provided parameters.
         """
-        return RequestOptions(
+        return build_request_options(
             method=method,
             url=url,
             headers=headers or {},
             params=params or {},
             cookies=cookies or {},
             data=data,
-            json_body=json,
+            json = json,
             timeout=timeout,
             allow_redirects=allow_redirects,
             verify=verify,
@@ -130,7 +133,7 @@ class PhantomClient:
             proxy=proxy,
             proxies=proxies
         )
-        return self.network_session.request(options)
+        return self._session.request(options)
     
     def head(
         self,
@@ -171,7 +174,7 @@ class PhantomClient:
             proxy=proxy,
             proxies=proxies
         )
-        return self.network_session.request(options)
+        return self._session.request(options)
     
     def options(
         self,
@@ -212,7 +215,7 @@ class PhantomClient:
             proxy=proxy,
             proxies=proxies
         )
-        return self.network_session.request(options)
+        return self._session.request(options)
 
     def post(
         self,
@@ -256,7 +259,7 @@ class PhantomClient:
             proxy=proxy,
             proxies=proxies
         )
-        return self.network_session.request(options)
+        return self._session.request(options)
     
     def put(
         self,
@@ -300,7 +303,7 @@ class PhantomClient:
             proxy=proxy,
             proxies=proxies
         )
-        return self.network_session.request(options)
+        return self._session.request(options)
 
     def patch(
         self,
@@ -344,7 +347,7 @@ class PhantomClient:
             proxy=proxy,
             proxies=proxies
         )
-        return self.network_session.request(options)
+        return self._session.request(options)
     
     def delete(
         self,
@@ -382,12 +385,45 @@ class PhantomClient:
             proxy=proxy,
             proxies=proxies
         )
-        return self.network_session.request(options)
+        return self._session.request(options)
     
     @property
-    def cookies(self) -> str:
+    def cookies(self) -> SessionCookies:
         """
         Provides live, mutable access to the cookies stored in this
         client's session.
         """
-        return self.network_session.cookies
+        return self._session.cookies
+
+    def new_page(self, url: Optional[str] = None) -> Page:
+        """
+        Creates a new virtual browser tab (Page) backed by this client's
+        shared NetworkSession.
+
+        If `url` is provided, immediately navigates the new page to it
+        (equivalent to calling `page.goto(url)` right after creation).
+
+        Args:
+            url: An optional URL to navigate to immediately after
+                creating the page. If omitted, the page is returned
+                without any document loaded.
+
+        Returns:
+            The newly created Page.
+
+        Raises:
+            NetworkError: If `url` is provided and the underlying HTTP
+                request fails (see Page.goto).
+            DOMBuildError: If `url` is provided and the response body
+                could not be parsed as HTML (see Page.goto).
+
+        Note:
+            If navigation fails (an exception is raised), the exception
+            propagates directly out of this method — the already-created
+            Page instance is not returned to the caller in that case.
+        """
+        page = Page(session=self._session)
+        if url:
+            page.goto(url)
+
+        return page

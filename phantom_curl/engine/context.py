@@ -9,12 +9,11 @@ handling.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import quickjs
 
-from phantom_curl.exceptions import JSRuntimeError
-
+from phantom_curl.exceptions import JSRuntimeError, EngineInitError
 
 class JSContext:
     """
@@ -71,3 +70,42 @@ class JSContext:
             ) from e
         
         return result
+    
+    def add_callable(self, func_name: str, function: Callable[..., Any]) -> None:
+        """
+        Registers a Python callable into the QuickJS environment's global
+        scope under the given name, making it callable from JS code as
+        `func_name(...)`.
+
+        Args:
+            func_name: The name the function will be exposed under in the
+                JS global scope. Must be a valid identifier (ASCII letters,
+                digits, underscore; cannot start with a digit).
+            function: The Python callable to expose. Its return value must
+                be a type that quickjs can convert to JS
+                (int, float, str, bool, list, dict, or None).
+
+        Raises:
+            TypeError: If `function` is not callable.
+            ValueError: If `func_name` is empty, whitespace, or not a
+                valid identifier.
+            EngineInitError: If the underlying QuickJS context fails to
+                register the callable.
+        """
+        if not callable(function):
+            raise TypeError("Provided object is not callable.")
+
+        if not func_name or not func_name.strip():
+            raise ValueError("The 'func_name' argument cannot be empty or whitespace.")
+
+        if not func_name.isidentifier():
+            raise ValueError(f"{func_name!r} is not a valid JavaScript identifier.")
+
+        try:
+            self._context.add_callable(func_name, function)
+        except Exception as e:
+            raise EngineInitError(
+                f"Failed to register callable {func_name!r} in the JS context: {e}"
+            ) from e
+        
+    

@@ -20,7 +20,6 @@ _JS_BUNDLE_DIR = Path(__file__).parent / "js_bundle"
 _POLYFILLS_PATH = _JS_BUNDLE_DIR / "polyfills.js"
 _LINKEDOM_PATH = _JS_BUNDLE_DIR / "linkedom.js"
 
-
 class DOMBuilder:
     """
     Wraps a JSContext pre-loaded with Linkedom, allowing HTML strings
@@ -28,16 +27,16 @@ class DOMBuilder:
     manipulated via JavaScript.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, context: JSContext) -> None:
         """
         Creates a new DOMBuilder, immediately loading the required
-        polyfills and the Linkedom bundle into a fresh JSContext.
+        polyfills and the Linkedom bundle into a JSContext
 
         Raises:
             EngineInitError: If the polyfills or Linkedom bundle fail
                 to load into the JS context.
         """
-        self._context = JSContext()
+        self._context = context
 
         with open(_LINKEDOM_PATH, encoding="utf-8") as file:
             linkedom = file.read()
@@ -73,7 +72,12 @@ class DOMBuilder:
             DOMBuildError: If the HTML could not be parsed.
         """
         safe_html_literal = json.dumps(html)
-        code = f"globalThis.__phantom_document = parseHTML({safe_html_literal}).document"
+        code = f"""
+        const parsed = parseHTML({safe_html_literal})
+        globalThis.window = parsed.window;
+        globalThis.document = parsed.document;
+        globalThis.__phantom_document = parsed.document;
+        """
 
         try:
             self._context.eval(code)
@@ -82,7 +86,7 @@ class DOMBuilder:
                 message=f"Failed to parse HTML: {e.message}",
                 html_snippet=html[:200]
             ) from e
-    
+
     def has_document(self) -> bool:
         """
         Checks whether a document is currently loaded into this context.
@@ -116,3 +120,36 @@ class DOMBuilder:
             return str(result)
         except JSRuntimeError as e:
             raise DOMBuildError(message=f"Serialization failed: {e.message}", html_snippet="") from e
+
+    def get_inline_scripts(self) -> list[str]:
+        """
+        Returns the text content of every inline <script> tag in the
+        currently loaded document (scripts without a `src` attribute),
+        in document order.
+
+        Scripts with a `src` attribute (external scripts) are excluded;
+        fetching and executing those is the responsibility of the caller
+        (see Page.goto).
+
+        Returns:
+            A list of script source strings, in document order. Empty
+            if there is no document loaded, or the document has no
+            inline scripts.
+
+        Raises:
+            DOMBuildError: If the underlying JS evaluation fails (e.g.
+                no document has been parsed yet).
+        """
+        js = """
+        JSON.stringify(
+            Array.from(__phantom_document.querySelectorAll('script'))
+                .filter(s => !s.hasAttribute('src') && s.textContent.trim())
+                .map(s => s.textContent)
+        )
+        """
+        try:
+            return json.loads(self._context.eval(js))
+        except JSRuntimeError as e:
+            raise DOMBuildError(
+                f"Failed to collect inline scripts: {e.message}"
+            ) from e

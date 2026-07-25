@@ -123,9 +123,23 @@ class RequestOptions:
         values such as dicts.
         """
         object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
+
         if self.params is not None:
             object.__setattr__(self, "params", MappingProxyType(dict(self.params)))
 
+        if self.cookies is not None:
+            object.__setattr__(self, "cookies", MappingProxyType(dict(self.cookies)))
+        
+        if isinstance(self.data, dict):
+            object.__setattr__(self, "data", MappingProxyType(dict(self.data)))
+        elif isinstance(self.data, list):
+            object.__setattr__(self, "data", tuple(self.data))
+
+        if isinstance(self.json_body, dict):
+            object.__setattr__(self, "json_body", MappingProxyType(dict(self.json_body)))
+        elif isinstance(self.json_body, list):
+            object.__setattr__(self, "json_body", tuple(self.json_body))
+        
         if self.proxy is not None and self.proxies is not None:
             raise ValueError(
                 "Cannot set both 'proxy' and 'proxies' at the same time. "
