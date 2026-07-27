@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 
 from pathlib import Path
+from typing import Optional
 
 from phantom_curl.engine.context import JSContext
 from phantom_curl.exceptions import JSRuntimeError, DOMBuildError, EngineInitError
@@ -55,7 +56,7 @@ class DOMBuilder:
                 f"incompatible with the current QuickJS runtime."
             ) from e
 
-    def parse_html(self, html: str) -> None:
+    def parse_html(self, html: str, url: Optional[str] = None) -> None:
         """
         Parses an HTML string into a DOM document, stored internally as
         a global variable inside the JS context for use by subsequent
@@ -67,16 +68,37 @@ class DOMBuilder:
 
         Args:
             html: The raw HTML source to parse.
+            url: The page URL (optional) used to initialize window.location.
 
         Raises:
             DOMBuildError: If the HTML could not be parsed.
         """
         safe_html_literal = json.dumps(html)
+        safe_url_literal = json.dumps(url or "")
         code = f"""
-        const parsed = parseHTML({safe_html_literal})
+        const parsed = parseHTML({safe_html_literal});
         globalThis.window = parsed.window;
         globalThis.document = parsed.document;
         globalThis.__phantom_document = parsed.document;
+
+        const loc = {{
+            href: {safe_url_literal},
+            protocol: {safe_url_literal}.split(':')[0] + ':',
+            host: ({safe_url_literal}.split('/')[2] || ''),
+            hostname: ({safe_url_literal}.split('/')[2] || '').split(':')[0],
+            pathname: '/' + ({safe_url_literal}.split('/').slice(3).join('/')),
+            search: '',
+            hash: ''
+        }};
+        globalThis.window.location = loc;
+        globalThis.location = loc;
+
+        // Install document.write/writeln polyfill now that globalThis.document
+        // is bound (polyfills.js is loaded before parseHTML runs, so the
+        // document did not exist yet at polyfill load time).
+        if (typeof globalThis.__phantom_ensure_write === 'function') {{
+            globalThis.__phantom_ensure_write();
+        }}
         """
 
         try:
@@ -121,35 +143,117 @@ class DOMBuilder:
         except JSRuntimeError as e:
             raise DOMBuildError(message=f"Serialization failed: {e.message}", html_snippet="") from e
 
-    def get_inline_scripts(self) -> list[str]:
+    def get_scripts(self) -> list[dict[str, str]]:
         """
-        Returns the text content of every inline <script> tag in the
-        currently loaded document (scripts without a `src` attribute),
-        in document order.
-
-        Scripts with a `src` attribute (external scripts) are excluded;
-        fetching and executing those is the responsibility of the caller
-        (see Page.goto).
+        Returns all non-empty <script> tags in the currently loaded
+        document, in exact document order, categorized as either
+        'inline' or 'external', and paired with a handle ID for the
+        underlying <script> node so callers (e.g. Page.goto) can point
+        document.write()-style polyfills at the script's position.
 
         Returns:
-            A list of script source strings, in document order. Empty
-            if there is no document loaded, or the document has no
-            inline scripts.
+            A list of dictionaries, e.g.:
+            [
+                {"type": "external", "src": "/static/jquery.js", "node_id": "script_1"},
+                {"type": "inline", "content": "console.log(1);", "node_id": "script_2"}
+            ]
+
+            Script tags that have neither a usable src nor non-empty
+            textContent are skipped (mirrors the previous behavior of
+            filtering via .filter(Boolean)).
 
         Raises:
-            DOMBuildError: If the underlying JS evaluation fails (e.g.
-                no document has been parsed yet).
+            DOMBuildError: If the underlying JS evaluation fails.
         """
         js = """
-        JSON.stringify(
-            Array.from(__phantom_document.querySelectorAll('script'))
-                .filter(s => !s.hasAttribute('src') && s.textContent.trim())
-                .map(s => s.textContent)
-        )
+        (function () {
+            if (!globalThis.__phantom_elements) globalThis.__phantom_elements = {};
+            if (!globalThis.__phantom_id_counter) globalThis.__phantom_id_counter = 0;
+
+            const out = [];
+            const nodes = Array.from(__phantom_document.querySelectorAll('script'));
+            for (const s of nodes) {
+                let entry = null;
+                if (s.hasAttribute('src') && s.getAttribute('src').trim()) {
+                    entry = { type: 'external', src: s.getAttribute('src').trim() };
+                } else if (s.textContent.trim()) {
+                    entry = { type: 'inline', content: s.textContent };
+                }
+                if (!entry) continue;
+                const id = 'script_' + (++globalThis.__phantom_id_counter);
+                globalThis.__phantom_elements[id] = s;
+                entry.node_id = id;
+                out.push(entry);
+            }
+            return JSON.stringify(out);
+        })()
         """
         try:
             return json.loads(self._context.eval(js))
         except JSRuntimeError as e:
             raise DOMBuildError(
-                f"Failed to collect inline scripts: {e.message}"
+                f"Failed to collect document scripts: {e.message}"
             ) from e
+
+    def get_inline_scripts(self) -> list[str]:
+        """
+        Returns the text content of every inline <script> tag in the
+        currently loaded document (scripts without a `src` attribute),
+        in document order.
+        """
+        return [s["content"] for s in self.get_scripts() if s.get("type") == "inline"]
+
+    def get_external_scripts(self) -> list[str]:
+        """
+        Returns the `src` URL attributes of every external <script> tag
+        in the currently loaded document (scripts with a `src` attribute),
+        in document order.
+        """
+        return [s["src"] for s in self.get_scripts() if s.get("type") == "external"]
+
+    def query_selector(self, selector: str) -> Optional[str]:
+        """
+        Executes document.querySelector(selector) inside JS, registers the node
+        in `globalThis.__phantom_elements`, and returns its handle ID (or None).
+        """
+        js = f"""
+        (function() {{
+            if (!globalThis.__phantom_elements) globalThis.__phantom_elements = {{}};
+            if (!globalThis.__phantom_id_counter) globalThis.__phantom_id_counter = 0;
+
+            const elem = __phantom_document.querySelector({json.dumps(selector)});
+            if (!elem) return null;
+
+            const id = 'elem_' + (++globalThis.__phantom_id_counter);
+            globalThis.__phantom_elements[id] = elem;
+            return id;
+        }})()
+        """
+        try:
+            result = self._context.eval(js)
+            return str(result) if result is not None else None
+        except JSRuntimeError as e:
+            raise DOMBuildError(f"query_selector failed for {selector!r}: {e.message}") from e
+
+    def query_selector_all(self, selector: str) -> list[str]:
+        """
+        Executes document.querySelectorAll(selector) inside JS, registers each node
+        in `globalThis.__phantom_elements`, and returns a list of handle IDs.
+        """
+        js = f"""
+        (function() {{
+            if (!globalThis.__phantom_elements) globalThis.__phantom_elements = {{}};
+            if (!globalThis.__phantom_id_counter) globalThis.__phantom_id_counter = 0;
+
+            const elems = Array.from(__phantom_document.querySelectorAll({json.dumps(selector)}));
+            return JSON.stringify(elems.map(elem => {{
+                const id = 'elem_' + (++globalThis.__phantom_id_counter);
+                globalThis.__phantom_elements[id] = elem;
+                return id;
+            }}));
+        }})()
+        """
+        try:
+            return json.loads(self._context.eval(js))
+        except JSRuntimeError as e:
+            raise DOMBuildError(f"query_selector_all failed for {selector!r}: {e.message}") from e

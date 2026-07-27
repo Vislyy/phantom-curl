@@ -16,28 +16,30 @@
  * This is a standard Web API function, not part of core ECMAScript,
  * so QuickJS does not provide it out of the box.
  */
-globalThis.atob = function (base64) {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  base64 = base64.replace(/[^A-Za-z0-9+/]/g, "");
-  let result = "";
-  let i = 0;
-  while (i < base64.length) {
-    const enc1 = chars.indexOf(base64.charAt(i++));
-    const enc2 = chars.indexOf(base64.charAt(i++));
-    const enc3 = chars.indexOf(base64.charAt(i++));
-    const enc4 = chars.indexOf(base64.charAt(i++));
+if (typeof globalThis.atob === "undefined") {
+  globalThis.atob = function (base64) {
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    base64 = String(base64).replace(/[^A-Za-z0-9+/]/g, "");
+    let result = "";
+    let i = 0;
+    while (i < base64.length) {
+      const enc1 = chars.indexOf(base64.charAt(i++));
+      const enc2 = chars.indexOf(base64.charAt(i++));
+      const enc3 = chars.indexOf(base64.charAt(i++));
+      const enc4 = chars.indexOf(base64.charAt(i++));
 
-    const chr1 = (enc1 << 2) | (enc2 >> 4);
-    const chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
-    const chr3 = ((enc3 & 3) << 6) | enc4;
+      const chr1 = (enc1 << 2) | (enc2 >> 4);
+      const chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+      const chr3 = ((enc3 & 3) << 6) | enc4;
 
-    result += String.fromCharCode(chr1);
-    if (enc3 !== -1 && enc3 !== 64) result += String.fromCharCode(chr2);
-    if (enc4 !== -1 && enc4 !== 64) result += String.fromCharCode(chr3);
-  }
-  return result;
-};
+      result += String.fromCharCode(chr1);
+      if (enc3 !== -1 && enc3 !== 64) result += String.fromCharCode(chr2);
+      if (enc4 !== -1 && enc4 !== 64) result += String.fromCharCode(chr3);
+    }
+    return result;
+  };
+}
 
 /**
  * Buffer - a minimal polyfill covering only what Linkedom's internal
@@ -47,17 +49,168 @@ globalThis.atob = function (base64) {
  * This is NOT a full Buffer implementation - it does not support
  * the full Node.js Buffer API surface.
  */
-globalThis.Buffer = {
-  from: function (input, encoding) {
-    if (encoding === "base64") {
-      const binaryString = atob(input);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
+if (typeof globalThis.Buffer === "undefined") {
+  globalThis.Buffer = {
+    from: function (input, encoding) {
+      if (encoding === "base64") {
+        const binaryString = globalThis.atob(input);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes;
       }
-      return bytes;
+      const encoder = new TextEncoder();
+      return encoder.encode(input);
+    },
+  };
+}
+
+/**
+ * Navigator Polyfill
+ * ==================
+ * Provides basic browser environment flags required by modern web scripts
+ * and frameworks (e.g. Vue, React, Cloudflare).
+ *
+ * Note: Temporarily hardcoded. Will be wired to Python Stealth Layer later.
+ */
+if (typeof globalThis.navigator === "undefined") {
+  globalThis.navigator = {
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    appName: "Netscape",
+    appVersion: "5.0 (Windows)",
+    platform: "Win32",
+    language: "uk-UA",
+    languages: ["uk-UA", "uk", "en-US", "en"],
+    cookieEnabled: true,
+    onLine: true,
+    webdriver: false,
+    hardwareConcurrency: 8,
+    maxTouchPoints: 0,
+  };
+}
+
+/**
+ * Screen & Window Metrics Polyfills
+ * =================================
+ * Exposes viewport and screen dimension properties used by responsive
+ * design scripts and analytics modules.
+ */
+if (typeof globalThis.screen === "undefined") {
+  globalThis.screen = {
+    width: 1920,
+    height: 1080,
+    availWidth: 1920,
+    availHeight: 1040,
+    colorDepth: 24,
+    pixelDepth: 24,
+  };
+}
+
+if (typeof globalThis.innerWidth === "undefined") {
+  globalThis.innerWidth = 1920;
+  globalThis.innerHeight = 1080;
+  globalThis.outerWidth = 1920;
+  globalThis.outerHeight = 1040;
+  globalThis.devicePixelRatio = 1;
+}
+
+/**
+ * Crypto Polyfill
+ * ===============
+ * Provides basic Web Crypto API capabilities (`getRandomValues`) required by
+ * UUID generation modules, Cloudflare Beacon, and security scripts.
+ */
+if (
+  typeof globalThis.crypto === "undefined" ||
+  typeof globalThis.crypto.getRandomValues === "undefined"
+) {
+  globalThis.crypto = {
+    getRandomValues: function (array) {
+      if (!array || (!array.length && array.length !== 0)) {
+        throw new TypeError(
+          "Failed to execute 'getRandomValues' on 'Crypto': parameter 1 is not of type 'ArrayBufferView'."
+        );
+      }
+      for (let i = 0; i < array.length; i++) {
+        array[i] = Math.floor(Math.random() * 256);
+      }
+      return array;
+    },
+  };
+}
+
+/**
+ * document.write / document.writeln polyfill
+ * ===========================================
+ *
+ * Real browsers implement document.write as a streaming parser hook:
+ * content written while the document is still being parsed is inserted
+ * at the parser's current position (i.e. at the <script> tag that
+ * issued the call). Linkedom parses the entire HTML up front via
+ * parseHTML(), so by the time any script runs the streaming parser
+ * no longer exists, and Linkedom does not provide document.write at
+ * all (typeof document.write === 'undefined').
+ *
+ * This polyfill emulates the streaming behavior by inserting the
+ * written markup immediately AFTER the <script> tag that is
+ * currently executing. The "currently executing script" is tracked
+ * by the Python side (Page.goto) through a global marker:
+ *
+ *     globalThis.__phantom_current_script
+ *
+ * which is set to the <script> node before the script's source is
+ * evaluated, and cleared afterwards. The polyfill uses
+ * insertAdjacentHTML('afterend', ...) on that node, which places the
+ * new content as a sibling directly following the <script> tag -
+ * mirroring where a real browser's parser would have resumed parsing.
+ *
+ * If no current script is set (e.g. write() called after page load),
+ * the content is appended to document.body, matching the spec's
+ * "after load" behavior of writing into the body.
+ *
+ * Note: this polyfill is installed lazily - globalThis.document is
+ * bound by DOMBuilder.parse_html(), which runs AFTER polyfills.js
+ * is loaded during DOMBuilder.__init__. Therefore the document is
+ * resolved at call-time via globalThis.document rather than captured
+ * at definition-time.
+ */
+(function () {
+  function flushInto(targetNode, html) {
+    const doc = globalThis.document;
+    if (!doc) return;
+    if (!targetNode) {
+      const body = doc.body;
+      if (!body) return;
+      body.insertAdjacentHTML("beforeend", html);
+      return;
     }
-    const encoder = new TextEncoder();
-    return encoder.encode(input);
-  },
-};
+    targetNode.insertAdjacentHTML("afterend", html);
+  }
+
+  function writeImpl(args, addNewline) {
+    const markup =
+      Array.prototype.slice.call(args).join("") + (addNewline ? "\n" : "");
+    const current = globalThis.__phantom_current_script || null;
+    flushInto(current, markup);
+  }
+
+  function ensureInstalled() {
+    const doc = globalThis.document;
+    if (!doc || doc.__phantom_write_installed) return;
+    doc.write = function () {
+      writeImpl(arguments, false);
+    };
+    doc.writeln = function () {
+      writeImpl(arguments, true);
+    };
+    doc.__phantom_write_installed = true;
+  }
+
+  // Install once a document exists. parse_html() also calls this
+  // after assigning globalThis.document, so the lazy guard above is
+  // enough to be idempotent.
+  ensureInstalled();
+  globalThis.__phantom_ensure_write = ensureInstalled;
+})();
