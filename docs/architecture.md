@@ -1,14 +1,20 @@
 # PhantomCurl Architecture
 
-PhantomCurl is built on the concept of "hybrid scraping," where the networking part acts as a full browser (TLS fingerprint), and the execution environment acts as a lightweight sandbox.
+PhantomCurl combines a network client with a lightweight JavaScript and DOM sandbox. It is deliberately smaller than a real browser: it can make TLS-impersonated HTTP requests, parse HTML, execute supported classic scripts, and expose the resulting DOM to Python.
 
 ## Network Layer
-Instead of standard `httpx`, which has a Python JA3 fingerprint, we use `curl_cffi`. It allows specifying `impersonate="chrome110"`, making the request look like a real browser at the TCP/TLS level. This layer manages sessions and cookies.
+Instead of standard `httpx`, the project uses `curl_cffi`. It allows specifying `impersonate="chrome110"`, making the request use that browser's TLS profile. One `NetworkSession` is shared by a `PhantomClient` and every page it creates, so cookies persist across requests.
+
+`RetryConfig` belongs to this layer. It controls retryable status codes, allowed methods, and exponential backoff. Its default is one attempt, so enabling retries is an explicit client decision. `StorageState` is a JSON-serializable snapshot of the cookie jar; applications decide where and how to store it.
 
 ## Environment Layer
-We don't use headless Chrome because it's heavy and easily detected. Instead:
-1. **QuickJS** — compiles and executes the site's JS code in memory with minimal overhead.
-2. **Domino** — a server-side DOM implementation (in pure JS) that creates `window` and `document` objects. The HTML obtained through the network layer is loaded into Domino, creating a virtual DOM tree.
+The environment has two parts:
 
-## Bridge Layer
-Sites make requests via `fetch()` or `XMLHttpRequest`. In our environment, these functions are monkey-patched. When JS on the site calls `fetch('/api/data')`, the call is intercepted, the data is serialized, and passed back to Python via the QuickJS API. Our network layer then makes the actual request via `curl_cffi`, receives the response, and returns it to JS as a Promise.
+1. **QuickJS** compiles and executes classic JavaScript in memory. Every page navigation starts a fresh context with time and memory limits, preventing JavaScript state from leaking between origins.
+2. **Linkedom** provides the virtual `window` and `document` objects. The network response HTML is parsed into this DOM, which can then be queried and manipulated through `Page` and `Element`.
+
+## Page lifecycle
+
+`Page.goto(url)` fetches the document through the shared network session, uses the final response URL as the base URL, parses the HTML, and runs supported inline and external classic scripts in document order. Relative external scripts are fetched through the same session and receive a `Referer` header.
+
+The current runtime does not implement a browser request bridge: `fetch()`, `XMLHttpRequest`, `localStorage`, and `sessionStorage` are unavailable. ES modules are also unsupported because QuickJS is called in classic-script mode and no module resolver or dependency loader exists.

@@ -120,7 +120,7 @@ class DOMBuilder:
         result = self._context.eval("typeof __phantom_document !== 'undefined'")
         return bool(result)
     
-    def get_outer(self) -> str:
+    def serialize(self) -> str:
         """
         Returns the full HTML of the currently loaded document.
 
@@ -154,8 +154,8 @@ class DOMBuilder:
         Returns:
             A list of dictionaries, e.g.:
             [
-                {"type": "external", "src": "/static/jquery.js", "node_id": "script_1"},
-                {"type": "inline", "content": "console.log(1);", "node_id": "script_2"}
+                {"script_type": "external", "code_type": "", "src": "/static/jquery.js", "node_id": "script_1"},
+                {"script_type": "inline", "code_type": "", "content": "console.log(1);", "node_id": "script_2"}
             ]
 
             Script tags that have neither a usable src nor non-empty
@@ -174,10 +174,11 @@ class DOMBuilder:
             const nodes = Array.from(__phantom_document.querySelectorAll('script'));
             for (const s of nodes) {
                 let entry = null;
+                const codeType = (s.getAttribute('type') || '').trim().toLowerCase();
                 if (s.hasAttribute('src') && s.getAttribute('src').trim()) {
-                    entry = { type: 'external', src: s.getAttribute('src').trim() };
+                    entry = { script_type: 'external', code_type: codeType, src: s.getAttribute('src').trim()};
                 } else if (s.textContent.trim()) {
-                    entry = { type: 'inline', content: s.textContent };
+                    entry = { script_type: 'inline', code_type: codeType, content: s.textContent };
                 }
                 if (!entry) continue;
                 const id = 'script_' + (++globalThis.__phantom_id_counter);
@@ -201,7 +202,7 @@ class DOMBuilder:
         currently loaded document (scripts without a `src` attribute),
         in document order.
         """
-        return [s["content"] for s in self.get_scripts() if s.get("type") == "inline"]
+        return [s["content"] for s in self.get_scripts() if s.get("script_type") == "inline"]
 
     def get_external_scripts(self) -> list[str]:
         """
@@ -209,7 +210,7 @@ class DOMBuilder:
         in the currently loaded document (scripts with a `src` attribute),
         in document order.
         """
-        return [s["src"] for s in self.get_scripts() if s.get("type") == "external"]
+        return [s["src"] for s in self.get_scripts() if s.get("script_type") == "external"]
 
     def query_selector(self, selector: str) -> Optional[str]:
         """

@@ -18,12 +18,25 @@ Classes in this module fall into two categories:
 
 from __future__ import annotations
 
+from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping, Optional
+from typing import Any, FrozenSet, Mapping, Optional
+from urllib.parse import quote
 
 from phantom_curl.utils import CaseInsensitiveDict
 from phantom_curl.exceptions import HTTPError
+
+
+def _freeze_value(value: Any) -> Any:
+    """Recursively freeze JSON-like values stored in request models."""
+    if isinstance(value, MappingABC):
+        return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_value(item) for item in value)
+    return value
 
 @dataclass(frozen=True, slots=True)
 class Cookie:
@@ -63,6 +76,140 @@ class Cookie:
     secure: bool = False
     http_only: bool = False
     same_site: Optional[str] = None
+
+
+@dataclass(frozen=True, slots=True)
+class StorageState:
+    """A serializable snapshot of the cookies in a client session."""
+
+    cookies: tuple[Cookie, ...] = ()
+
+    def to_dict(self) -> dict[str, list[dict[str, Any]]]:
+        """Return a JSON-compatible representation of this state."""
+        return {
+            "cookies": [
+                {
+                    "name": cookie.name,
+                    "value": cookie.value,
+                    "domain": cookie.domain,
+                    "path": cookie.path,
+                    "expires": cookie.expires,
+                    "secure": cookie.secure,
+                    "http_only": cookie.http_only,
+                    "same_site": cookie.same_site,
+                }
+                for cookie in self.cookies
+            ]
+        }
+
+    def to_json(self) -> str:
+        """Serialize this state without performing any filesystem I/O."""
+        import json
+
+        return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "StorageState":
+        """Create a state snapshot from a validated JSON-like mapping."""
+        raw_cookies = data.get("cookies")
+        if not isinstance(raw_cookies, list):
+            raise ValueError("Storage state must contain a 'cookies' list.")
+
+        cookies: list[Cookie] = []
+        for raw_cookie in raw_cookies:
+            if not isinstance(raw_cookie, MappingABC):
+                raise ValueError("Every cookie in storage state must be an object.")
+
+            name = raw_cookie.get("name")
+            value = raw_cookie.get("value")
+            domain = raw_cookie.get("domain")
+            path = raw_cookie.get("path", "/")
+            expires = raw_cookie.get("expires")
+            same_site = raw_cookie.get("same_site")
+            secure = raw_cookie.get("secure", False)
+            http_only = raw_cookie.get("http_only", False)
+
+            if not isinstance(name, str) or not name:
+                raise ValueError("Every stored cookie must have a non-empty string name.")
+            if not isinstance(value, str):
+                raise ValueError("Every stored cookie must have a string value.")
+            if domain is not None and not isinstance(domain, str):
+                raise ValueError("Cookie domain must be a string or null.")
+            if not isinstance(path, str) or not path.startswith("/"):
+                raise ValueError("Cookie path must be an absolute path.")
+            if expires is not None and (isinstance(expires, bool) or not isinstance(expires, (int, float))):
+                raise ValueError("Cookie expiry must be a number or null.")
+            if same_site is not None and not isinstance(same_site, str):
+                raise ValueError("Cookie SameSite value must be a string or null.")
+            if not isinstance(secure, bool) or not isinstance(http_only, bool):
+                raise ValueError("Cookie secure and http_only flags must be booleans.")
+
+            cookies.append(
+                Cookie(
+                    name=name,
+                    value=value,
+                    domain=domain,
+                    path=path,
+                    expires=float(expires) if expires is not None else None,
+                    secure=secure,
+                    http_only=http_only,
+                    same_site=same_site,
+                )
+            )
+
+        return cls(cookies=tuple(cookies))
+
+    @classmethod
+    def from_json(cls, serialized: str) -> "StorageState":
+        """Deserialize state exported by :meth:`to_json`."""
+        import json
+
+        try:
+            data = json.loads(serialized)
+        except json.JSONDecodeError as error:
+            raise ValueError("Storage state is not valid JSON.") from error
+        if not isinstance(data, MappingABC):
+            raise ValueError("Storage state JSON must contain an object.")
+        return cls.from_dict(data)
+
+
+@dataclass(frozen=True, slots=True)
+class RetryConfig:
+    """Policy for retrying transient request failures in a network session."""
+
+    max_attempts: int = 1
+    backoff_factor: float = 0.25
+    retry_status_codes: FrozenSet[int] = frozenset({408, 429, 500, 502, 503, 504})
+    allowed_methods: FrozenSet[str] = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
+
+    def __post_init__(self) -> None:
+        if isinstance(self.max_attempts, bool) or not isinstance(self.max_attempts, int) or self.max_attempts < 1:
+            raise ValueError("max_attempts must be an integer greater than or equal to 1.")
+        if isinstance(self.backoff_factor, bool) or not isinstance(self.backoff_factor, (int, float)):
+            raise ValueError("backoff_factor must be a non-negative number.")
+        if self.backoff_factor < 0:
+            raise ValueError("backoff_factor cannot be negative.")
+
+        status_codes = frozenset(self.retry_status_codes)
+        if any(isinstance(code, bool) or not isinstance(code, int) or not 100 <= code <= 599 for code in status_codes):
+            raise ValueError("retry_status_codes must contain valid HTTP status codes.")
+
+        if any(not isinstance(method, str) for method in self.allowed_methods):
+            raise ValueError("allowed_methods must contain HTTP method names as strings.")
+        methods = frozenset(method.upper() for method in self.allowed_methods)
+        if not methods or any(not method.isalpha() for method in methods):
+            raise ValueError("allowed_methods must contain one or more HTTP method names.")
+
+        object.__setattr__(self, "retry_status_codes", status_codes)
+        object.__setattr__(self, "allowed_methods", methods)
+
+    def should_retry_status(self, method: str, status_code: int) -> bool:
+        """Return whether a response status qualifies for another attempt."""
+        return method.upper() in self.allowed_methods and status_code in self.retry_status_codes
+
+    def delay_for_retry(self, retry_number: int) -> float:
+        """Return exponential backoff delay for the given one-based retry number."""
+        return self.backoff_factor * (2 ** (retry_number - 1))
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,15 +277,8 @@ class RequestOptions:
         if self.cookies is not None:
             object.__setattr__(self, "cookies", MappingProxyType(dict(self.cookies)))
         
-        if isinstance(self.data, dict):
-            object.__setattr__(self, "data", MappingProxyType(dict(self.data)))
-        elif isinstance(self.data, list):
-            object.__setattr__(self, "data", tuple(self.data))
-
-        if isinstance(self.json_body, dict):
-            object.__setattr__(self, "json_body", MappingProxyType(dict(self.json_body)))
-        elif isinstance(self.json_body, list):
-            object.__setattr__(self, "json_body", tuple(self.json_body))
+        object.__setattr__(self, "data", _freeze_value(self.data))
+        object.__setattr__(self, "json_body", _freeze_value(self.json_body))
         
         if self.proxy is not None and self.proxies is not None:
             raise ValueError(
@@ -357,6 +497,14 @@ class ProxyConfig:
     _VALID_SCHEMES = frozenset({"http", "https", "socks4", "socks5", "socks5h"})
 
     def __post_init__(self) -> None:
+        if not self.host or not self.host.strip():
+            raise ValueError("Proxy host cannot be empty.")
+        if isinstance(self.port, bool) or not isinstance(self.port, int) or not 1 <= self.port <= 65535:
+            raise ValueError("Proxy port must be an integer between 1 and 65535.")
+        if self.password is not None and not self.username:
+            raise ValueError("A proxy password requires a username.")
+
+        object.__setattr__(self, "host", self.host.strip())
         object.__setattr__(self, "scheme", self.scheme.lower())
         if self.scheme not in self._VALID_SCHEMES:
             raise ValueError(
@@ -365,7 +513,15 @@ class ProxyConfig:
         )
 
     @property
-    def url(self):
+    def url(self) -> str:
         """Builds the full proxy URL, e.g. 'http://user:pass@host:port'."""
-        auth = f"{self.username}:{self.password}@" if self.username else ""
-        return f"{self.scheme}://{auth}{self.host}:{self.port}"
+        auth = ""
+        if self.username:
+            username = quote(self.username, safe="")
+            password = quote(self.password or "", safe="")
+            auth = f"{username}:{password}@"
+
+        host = self.host
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        return f"{self.scheme}://{auth}{host}:{self.port}"

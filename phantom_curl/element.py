@@ -57,7 +57,7 @@ class Element:
         return str(res) if res is not None else ""
 
     @property
-    def outer_html(self) -> str:
+    def html(self) -> str:
         """
         Returns the outer HTML serialization of this element (equivalent to JS `outerHTML`).
         """
@@ -65,13 +65,42 @@ class Element:
         res = self._context.eval(js)
         return str(res) if res is not None else ""
 
+    @property
+    def attrs(self) -> dict[str, str]:
+        """ 
+        Returns the dictionary of this element's attributes. 
+        """
+        js = f"globalThis.__phantom_elements[{self._handle_id!r}] ? globalThis.__phantom_elements[{self._handle_id!r}].getAttributeNames().reduce((acc, n) => ({{...acc, [n]: globalThis.__phantom_elements[{self._handle_id!r}].getAttribute(n)}}), {{}}) : {{}}"
+        res = self._context.eval(js)
+        return res if res is not None else ""
+
+    def _create_event_script(
+        self,
+        event_type,
+        **kwargs,
+    ) -> str:
+        js = f"""
+        (() => {{
+            const elem = globalThis.__phantom_elements[{json.dumps(self._handle_id)}];
+
+            const event = new Event({json.dumps(event_type)}, {{
+                bubbles: {str(kwargs.get("bubbles", True).lower())},
+                cancelable: {str(kwargs.get("cancelable", True).lower())}
+            }});
+
+            return element.dispatchEvent(event);
+        }})()
+        """
+
+        return js
+
     def get_attribute(self, name: str) -> Optional[str]:
         """
         Returns the value of the named attribute, or None if the attribute
         does not exist.
 
         Args:
-            name: The attribute name (e.g. 'href', 'class', 'value').
+            name: The attribute name (e.g. ' href', 'class', 'value').
         """
         js = f"""
         (function() {{
@@ -154,3 +183,17 @@ class Element:
         """
 
         self._context.eval(js)
+
+    def dispatch_event(
+        self,
+        event_type: str,
+        *,
+        bubbles: bool = True,
+        cancelable: bool = True,
+    ) -> bool:
+        script = self._create_event_script(
+            event_type,
+            bubbles=cancelable,
+            cancelable=cancelable
+        )
+        return self._context.eval(script)

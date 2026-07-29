@@ -38,3 +38,6 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py39"
+
+[tool.mypy]
+ignore_missing_imports = true

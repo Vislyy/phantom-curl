@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import json
 
-from typing import Optional
+from typing import ClassVar, FrozenSet, Optional
 from urllib.parse import urljoin
 
 from phantom_curl.engine.context import JSContext
@@ -47,6 +47,15 @@ class Page:
     are visible to requests made from within this page, and vice versa.
     """
 
+    _CLASSIC_SCRIPT_TYPES: ClassVar[FrozenSet[str]] = frozenset({
+        "",
+        "text/javascript",
+        "application/javascript",
+        "text/ecmascript",
+        "application/ecmascript",
+        "application/x-javascript",
+    })
+
     def __init__(self, session: NetworkSession):
         """
         Creates a new Page backed by a fresh JS execution context.
@@ -66,12 +75,47 @@ class Page:
             which must not leak between unrelated pages/tabs.
         """
         self._session = session
-        self._context = JSContext()
-        self._dom_builder = DOMBuilder(self._context)
+        self._reset_runtime()
 
-        self.url: Optional[str] = None
         self.response: Optional[Response] = None
         self.script_errors: list[Exception] = []
+
+        self.url: Optional[str] = None
+
+    @property
+    def html(self) -> str:
+        return self._dom_builder.serialize()
+
+    @property
+    def title(self) -> str:
+        title = self.query_selector("title")
+        return title.text if title else ""
+
+    @property
+    def text(self) -> str:
+        body = self.query_selector("body")
+        return body.text if body else ""
+
+    @property
+    def body(self) -> str:
+        return self.query_selector("body")
+
+    @property
+    def head(self) -> str:
+        return self.query_selector("head")
+
+    @property
+    def status_code(self) -> int:
+        return self.response.status_code
+
+    @property
+    def ok(self) -> bool:
+        return self.response < 400
+        
+    def _reset_runtime(self) -> None:
+        """Create a fresh JS environment for each navigation."""
+        self._context = JSContext()
+        self._dom_builder = DOMBuilder(self._context)
 
     def goto(self, url: str) -> Response:
         """
@@ -107,26 +151,40 @@ class Page:
         """
         request_options = build_request_options(method="GET", url=url)
         response = self._session.request(request_options)
-        self.url = url
-        self._dom_builder.parse_html(response.text, url=url)
+
+        self.url = response.url
+
+        self._reset_runtime()
+        self._dom_builder.parse_html(response.text, url=self.url)
+
         self.script_errors = []
 
         for entry in self._dom_builder.get_scripts():
+            if entry["code_type"] == "module":
+                logger.info("Skipping unsupported module script on %s", self.url)
+                continue
+            if entry["code_type"] not in self._CLASSIC_SCRIPT_TYPES:
+                continue
+
             self._context.eval(
                 f"globalThis.__phantom_current_script = globalThis.__phantom_elements[{json.dumps(entry['node_id'])}];"
             )
             try:
-                if entry["type"] == "inline":
+                if entry["script_type"] == "inline":
                     try:
                         self._context.eval(entry["content"])
                     except JSRuntimeError as e:
                         logger.warning("Inline script execution failed on %s: %s", url, e)
                         self.script_errors.append(e)
 
-                elif entry["type"] == "external":
+                elif entry["script_type"] == "external":
                     script_url = urljoin(self.url, entry["src"])
                     try:
-                        script_options = build_request_options(method="GET", url=script_url)
+                        script_options = build_request_options(
+                            method="GET",
+                            url=script_url,
+                            headers={"Referer": self.url},
+                        )
                         script_response = self._session.request(script_options)
                         self._context.eval(script_response.text)
                     except Exception as e:
@@ -140,6 +198,9 @@ class Page:
 
         self.response = response
         return response
+
+    def content(self) -> str:
+        return self.html
 
     def query_selector(self, selector: str) -> Optional[Element]:
         """
@@ -166,3 +227,8 @@ class Page:
         """
         handle_ids = self._dom_builder.query_selector_all(selector)
         return [Element(self._context, hid) for hid in handle_ids]
+
+    def eval(self, js_code):
+        result = self._context.eval(js_code)
+
+        return result

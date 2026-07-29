@@ -12,7 +12,7 @@ def build_request_options(
     cookies: Optional[Mapping[str, str]] = None,
     data: Optional[Any] = None,
     json: Optional[Any] = None,
-    timeout: Optional[float] = 30.0,
+    timeout: float = 30.0,
     allow_redirects: bool = True,
     verify: bool = True,
     proxy: Optional[ProxyConfig] = None,

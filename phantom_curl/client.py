@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from typing import Optional, Mapping, Any
 
-from phantom_curl.models import StealthConfig, Response, RequestOptions, ProxyConfig
+from phantom_curl.models import (
+    ProxyConfig,
+    RequestOptions,
+    Response,
+    RetryConfig,
+    StealthConfig,
+    StorageState,
+)
 from phantom_curl.page import Page
 from phantom_curl.network.session_cookies import SessionCookies
 from phantom_curl.network.session import NetworkSession
@@ -31,17 +38,27 @@ class PhantomClient:
         200
     """
 
-    def __init__(self, stealth_config: Optional[StealthConfig] = None) -> None:
+    def __init__(
+        self,
+        stealth_config: Optional[StealthConfig] = None,
+        retry_config: Optional[RetryConfig] = None,
+    ) -> None:
         """
         Creates a new PhantomClient.
 
         Args:
             stealth_config: Stealth settings to use for this client.
                 If not provided, default StealthConfig() is used.
+            retry_config: Policy for retrying transient network failures.
+                If omitted, each request is attempted once.
         """
         self.stealth_config = stealth_config or StealthConfig()
+        self.retry_config = retry_config or RetryConfig()
 
-        self._session = NetworkSession(stealth_config=self.stealth_config)
+        self._session = NetworkSession(
+            stealth_config=self.stealth_config,
+            retry_config=self.retry_config,
+        )
 
     def close(self) -> None:
         """
@@ -427,3 +444,11 @@ class PhantomClient:
             page.goto(url)
 
         return page
+
+    def export_storage_state(self) -> StorageState:
+        """Return a JSON-serializable snapshot of the current cookie session."""
+        return self._session.export_storage_state()
+
+    def import_storage_state(self, state: StorageState, *, clear_existing: bool = True) -> None:
+        """Restore cookies from a previously exported storage snapshot."""
+        self._session.import_storage_state(state, clear_existing=clear_existing)
