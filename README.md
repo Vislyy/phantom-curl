@@ -1,6 +1,6 @@
 # 🕵️‍♂️ PhantomCurl
 
-[![CI Status](https://img.shields.io/github/actions/workflow/status/YOUR_USERNAME/phantom-curl/ci.yml?branch=main)](https://github.com/YOUR_USERNAME/phantom-curl/actions)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/Vislyy/phantom-curl/ci.yml?branch=main)](https://github.com/Vislyy/phantom-curl/actions)
 [![PyPI version](https://img.shields.io/pypi/v/phantom-curl.svg)](https://pypi.org/project/phantom-curl/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/phantom-curl.svg)](https://pypi.org/project/phantom-curl/)
 
@@ -66,6 +66,10 @@ PhantomCurl currently consists of three implemented layers:
 3. **Page Layer:** Fetches HTML and classic external or inline scripts through the shared network session, then exposes DOM elements to Python.
 
 Read more in the [architecture documentation](docs/architecture.md).
+
+## Learning path
+
+Want to contribute features yourself? Start with the [learning path](docs/learning-path.md): it gives scoped exercises, research topics, and testable completion criteria without handing you the implementation.
 
 ## 🤝 Contributing
 

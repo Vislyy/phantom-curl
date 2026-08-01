@@ -4,7 +4,6 @@ from phantom_curl.exceptions import RequestTimeoutError
 from phantom_curl.models import RequestOptions, Response, RetryConfig, StealthConfig
 from phantom_curl.network.session import NetworkSession
 
-
 def test_network_session_request(network_session, http_server: str) -> None:
     options = RequestOptions(
         method="GET",

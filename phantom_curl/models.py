@@ -18,11 +18,13 @@ Classes in this module fall into two categories:
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, FrozenSet, Mapping, Optional
-from urllib.parse import quote
+from typing import Any, FrozenSet, Iterator, Mapping, Optional
+from urllib.parse import quote, unquote, urlparse
 
 from phantom_curl.utils import CaseInsensitiveDict
 from phantom_curl.exceptions import HTTPError
@@ -259,6 +261,7 @@ class RequestOptions:
     verify: bool = True
     proxy: Optional[ProxyConfig] = None
     proxies: Optional[Mapping[str, ProxyConfig]] = None
+    retry_config: Optional[RetryConfig] = None
 
     def __post_init__(self) -> None:
         """
@@ -363,6 +366,32 @@ class Response:
     def ok(self) -> bool:
         """Returns True if the response status code indicates success (< 400)."""
         return self.status_code < 400
+
+    @property
+    def is_redirect(self) -> bool:
+        """Return whether the response status is in the 3xx range."""
+        return 300 <= self.status_code < 400
+
+    @property
+    def is_client_error(self) -> bool:
+        """Return whether the response status is in the 4xx range."""
+        return 400 <= self.status_code < 500
+
+    @property
+    def is_server_error(self) -> bool:
+        """Return whether the response status is in the 5xx range."""
+        return 500 <= self.status_code < 600
+
+    def iter_bytes(self, chunk_size: int = 8192) -> Iterator[bytes]:
+        """Yield the already-downloaded response body in fixed-size chunks."""
+        if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size < 1:
+            raise ValueError("chunk_size must be a positive integer.")
+        for index in range(0, len(self.content), chunk_size):
+            yield self.content[index:index + chunk_size]
+
+    def iter_lines(self, keepends: bool = False) -> Iterator[str]:
+        """Yield decoded response lines from the already-downloaded response body."""
+        yield from self.text.splitlines(keepends=keepends)
 
     def raise_for_status(self) -> None:
         """
@@ -516,12 +545,43 @@ class ProxyConfig:
     def url(self) -> str:
         """Builds the full proxy URL, e.g. 'http://user:pass@host:port'."""
         auth = ""
+
         if self.username:
             username = quote(self.username, safe="")
-            password = quote(self.password or "", safe="")
-            auth = f"{username}:{password}@"
+            auth = quote(self.username, safe="")
+
+            if self.password is not None:
+                auth += ":" + quote(self.password, safe="")
+
+            auth += "@"
 
         host = self.host
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
         return f"{self.scheme}://{auth}{host}:{self.port}"
+
+    @classmethod
+    def from_string(cls, proxy_str: str) -> "ProxyConfig":
+        """
+        Parse a proxy URL string into a ProxyConfig object.
+
+        Args:
+            proxy_str: A proxy URL string, e.g. "http://user:pass@host:port".
+
+        Returns:
+            A ProxyConfig instance representing the parsed proxy.
+
+        Raises:
+            ValueError: If the input string is not a valid proxy URL.
+        """
+        parsed = urlparse(proxy_str)
+        if not parsed.scheme or not parsed.hostname or not parsed.port:
+            raise ValueError(f"Invalid proxy URL: {proxy_str!r}")
+
+        return cls(
+            scheme=parsed.scheme,
+            host=parsed.hostname,
+            port=parsed.port,
+            username=unquote(parsed.username) if isinstance(parsed.username, str) else None,
+            password=unquote(parsed.password) if isinstance(parsed.password, str) else None,
+        )

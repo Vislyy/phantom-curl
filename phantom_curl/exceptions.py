@@ -43,6 +43,7 @@ __all__ = [
     "EngineError",
     "EngineInitError",
     "DOMBuildError",
+    "StaleElementError",
     "JSRuntimeError",
     "BridgeError",
     "InterceptorError",
@@ -163,7 +164,6 @@ class EngineError(PhantomError):
     and executing JS code inside the sandbox.
     """
 
-
 class EngineInitError(EngineError):
     """
     Failed to initialize the JS engine: an error occurred while creating
@@ -171,11 +171,10 @@ class EngineInitError(EngineError):
     the sandbox.
     """
 
-
 class DOMBuildError(EngineError):
     """
     An error occurred while building the DOM tree from the fetched HTML
-    using Domino.
+    using Linkedom.
 
     Attributes:
         html_snippet: The HTML fragment where the failure occurred
@@ -186,6 +185,30 @@ class DOMBuildError(EngineError):
         self.html_snippet = html_snippet
         super().__init__(message)
 
+class StaleElementError(EngineError):
+    """
+    Raised when an Element object is accessed after it has become stale.
+
+    This usually happens when the DOM has been replaced (for example, after
+    calling `Page.goto()`), making all previously obtained Element instances
+    invalid.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        selector: str,
+        created_url: Optional[str],
+        current_url: Optional[str],
+        created_generation: int,
+        current_generation: int,
+    ) -> None:
+        self.selector = selector
+        self.created_url = created_url
+        self.current_url = current_url
+        self.created_generation = created_generation
+        self.current_generation = current_generation
+        super().__init__(message)
 
 class JSRuntimeError(EngineError):
     """

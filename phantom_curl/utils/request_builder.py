@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Mapping, Any
 
-from phantom_curl.models import ProxyConfig, RequestOptions
+from phantom_curl.models import ProxyConfig, RequestOptions, RetryConfig
 
 def build_request_options(
     method: str,
@@ -16,7 +16,8 @@ def build_request_options(
     allow_redirects: bool = True,
     verify: bool = True,
     proxy: Optional[ProxyConfig] = None,
-    proxies: Optional[Mapping[str, ProxyConfig]] = None
+    proxies: Optional[Mapping[str, ProxyConfig]] = None,
+    retry_config: Optional[RetryConfig] = None,
 ) -> RequestOptions:
     """
     Internal helper to build RequestOptions from the provided parameters.
@@ -34,4 +35,5 @@ def build_request_options(
         verify=verify,
         proxy=proxy,
         proxies=proxies,
+        retry_config=retry_config
     )

@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import json
 
-from typing import ClassVar, FrozenSet, Optional
+from typing import Any, ClassVar, FrozenSet, Optional
 from urllib.parse import urljoin
 
 from phantom_curl.engine.context import JSContext
@@ -32,7 +32,7 @@ from phantom_curl.element import Element
 from phantom_curl.models import Response
 from phantom_curl.exceptions import JSRuntimeError
 from phantom_curl.network.session import NetworkSession
-from phantom_curl.utils.request_options_builder import build_request_options
+from phantom_curl.utils.request_builder import build_request_options
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,7 @@ class Page:
         """
         self._session = session
         self._reset_runtime()
+        self._generation = 0
 
         self.response: Optional[Response] = None
         self.script_errors: list[Exception] = []
@@ -97,20 +98,25 @@ class Page:
         return body.text if body else ""
 
     @property
-    def body(self) -> str:
+    def body(self) -> Optional[Element]:
         return self.query_selector("body")
 
     @property
-    def head(self) -> str:
+    def head(self) -> Optional[Element]:
         return self.query_selector("head")
 
     @property
-    def status_code(self) -> int:
-        return self.response.status_code
+    def status_code(self) -> Optional[int]:
+        return self.response.status_code if self.response is not None else None
 
     @property
-    def ok(self) -> bool:
-        return self.response < 400
+    def ok(self) -> Optional[bool]:
+        return self.response.ok if self.response is not None else None
+
+    @property
+    def is_loaded(self) -> bool:
+        """Whether this page has completed at least one navigation."""
+        return self.response is not None
         
     def _reset_runtime(self) -> None:
         """Create a fresh JS environment for each navigation."""
@@ -156,6 +162,7 @@ class Page:
 
         self._reset_runtime()
         self._dom_builder.parse_html(response.text, url=self.url)
+        self._generation += 1
 
         self.script_errors = []
 
@@ -178,12 +185,12 @@ class Page:
                         self.script_errors.append(e)
 
                 elif entry["script_type"] == "external":
-                    script_url = urljoin(self.url, entry["src"])
+                    script_url = urljoin(self.url or url, entry["src"])
                     try:
                         script_options = build_request_options(
                             method="GET",
                             url=script_url,
-                            headers={"Referer": self.url},
+                            headers={"Referer": self.url or url},
                         )
                         script_response = self._session.request(script_options)
                         self._context.eval(script_response.text)
@@ -213,7 +220,16 @@ class Page:
             An Element proxy object, or None if no match is found.
         """
         handle_id = self._dom_builder.query_selector(selector)
-        return Element(self._context, handle_id) if handle_id else None
+        if handle_id is None:
+            return None
+        return Element(
+            page=self,
+            context=self._context,
+            handle_id=handle_id,
+            generation=self._generation,
+            selector=selector,
+            created_url=self.url,
+        )
 
     def query_selector_all(self, selector: str) -> list[Element]:
         """
@@ -226,9 +242,22 @@ class Page:
             A list of Element proxy objects (empty if no matches found).
         """
         handle_ids = self._dom_builder.query_selector_all(selector)
-        return [Element(self._context, hid) for hid in handle_ids]
+        return [
+            Element(
+                page=self,
+                context=self._context,
+                handle_id=handle_id,
+                generation=self._generation,
+                selector=selector,
+                created_url=self.url,
+            )
+            for handle_id in handle_ids
+        ]
 
-    def eval(self, js_code):
-        result = self._context.eval(js_code)
+    def evaluate(self, js_code: str) -> Any:
+        """Evaluate JavaScript in the current page context."""
+        return self._context.eval(js_code)
 
-        return result
+    def eval(self, js_code: str) -> Any:
+        """Alias for :meth:`evaluate`, retained for a concise interactive API."""
+        return self.evaluate(js_code)

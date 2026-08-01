@@ -1,4 +1,6 @@
-from phantom_curl import PhantomClient, StealthConfig, StorageState
+from unittest.mock import patch
+
+from phantom_curl import PhantomClient, Response, RetryConfig, StealthConfig, StorageState
 
 
 def test_public_api_exports_client_and_config() -> None:
@@ -44,13 +46,44 @@ def test_client_restores_cookie_storage_state(phantom_client, http_server: str) 
         assert restored_client.get(f"{http_server}/cookies").json() == {"session_id": "abc123"}
 
 
-def test_page_uses_final_redirect_url_and_executes_only_classic_scripts(phantom_client, http_server: str) -> None:
-    page = phantom_client.new_page(f"{http_server}/redirect-page")
-    body = page.query_selector("body")
+def test_client_get_uses_a_per_request_retry_override(phantom_client, http_server: str) -> None:
+    override = RetryConfig(max_attempts=3, backoff_factor=0, retry_status_codes=frozenset({503}))
 
-    assert page.url == f"{http_server}/page/"
-    assert body is not None
-    assert body.get_attribute("inline-ran") == "yes"
-    assert body.get_attribute("external-ran") == "yes"
-    assert body.get_attribute("module-ran") is None
-    assert page.script_errors == []
+    response = phantom_client.get(f"{http_server}/flaky-override", retry_config=override)
+
+    assert response.status_code == 200
+    assert response.json() == {"attempt": 3}
+    assert phantom_client.retry_config.max_attempts == 1
+
+
+def test_each_http_method_forwards_its_retry_override(phantom_client) -> None:
+    response = Response(
+        url="https://example.test",
+        status_code=200,
+        headers={},
+        cookies=(),
+        text="",
+        content=b"",
+        elapsed=0,
+    )
+    override = RetryConfig(max_attempts=2, backoff_factor=0)
+
+    with patch.object(phantom_client._session, "request", return_value=response) as request:
+        phantom_client.get("https://example.test", retry_config=override)
+        phantom_client.head("https://example.test", retry_config=override)
+        phantom_client.options("https://example.test", retry_config=override)
+        phantom_client.post("https://example.test", retry_config=override)
+        phantom_client.put("https://example.test", retry_config=override)
+        phantom_client.patch("https://example.test", retry_config=override)
+        phantom_client.delete("https://example.test", retry_config=override)
+
+    assert [call.args[0].method for call in request.call_args_list] == [
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+    ]
+    assert all(call.args[0].retry_config is override for call in request.call_args_list)

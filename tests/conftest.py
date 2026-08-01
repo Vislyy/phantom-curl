@@ -18,6 +18,7 @@ from phantom_curl.network.session import NetworkSession
 class _TestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     flaky_requests = 0
+    flaky_override_requests = 0
 
     def log_message(self, format: str, *args: object) -> None:
         """Keep test output quiet."""
@@ -71,6 +72,13 @@ class _TestHandler(BaseHTTPRequestHandler):
             self._send_json(status, {"attempt": attempt})
             return
 
+        if parsed.path == "/flaky-override":
+            type(self).flaky_override_requests += 1
+            attempt = type(self).flaky_override_requests
+            status = 503 if attempt < 3 else 200
+            self._send_json(status, {"attempt": attempt})
+            return
+
         if parsed.path == "/redirect-page":
             self.send_response(302)
             self.send_header("Location", "/page/")
@@ -94,6 +102,32 @@ class _TestHandler(BaseHTTPRequestHandler):
             received_referer = "yes" if self.headers.get("Referer") else "no"
             body = f"document.body.setAttribute('external-ran', '{received_referer}');".encode()
             self._send(200, body, "text/javascript")
+            return
+
+        if parsed.path == "/broken-page/":
+            body = b"<html><body><script>throw new Error('test script failure');</script></body></html>"
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/elements/":
+            body = b"""
+                <html>
+                    <head><title>Element fixture</title></head>
+                    <body>
+                        <input id="name" class="field" data-kind="name">
+                        <button id="action">Run</button>
+                        <p class="item">First</p><p class="item">Second</p>
+                        <script>
+                            const input = document.getElementById('name');
+                            const button = document.getElementById('action');
+                            input.addEventListener('input', () => document.body.setAttribute('input-value', input.value));
+                            button.addEventListener('click', () => document.body.setAttribute('clicked', 'yes'));
+                            button.addEventListener('custom-event', () => document.body.setAttribute('custom-event', 'yes'));
+                        </script>
+                    </body>
+                </html>
+            """
+            self._send(200, body, "text/html")
             return
 
         self._send_json(404, {"error": "not found"})
@@ -121,7 +155,6 @@ def http_server() -> Iterator[str]:
         server.shutdown()
         thread.join()
         server.server_close()
-
 
 @pytest.fixture
 def network_session() -> Iterator[NetworkSession]:

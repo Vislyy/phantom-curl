@@ -21,7 +21,7 @@ from curl_cffi.requests.exceptions import (
 from typing import Any, Optional, cast
 
 from phantom_curl.exceptions import ConnectionRejectedError, RequestTimeoutError
-from phantom_curl.models import Cookie, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
+from phantom_curl.models import Cookie, ProxyConfig, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
 from phantom_curl.network.session_cookies import SessionCookies
 from phantom_curl.utils.cookie import cookiejar_to_tuple
 
@@ -158,14 +158,13 @@ class NetworkSession:
         """
         if options.proxies is not None:
             return {
-                protocol: proxy_config.url
+                protocol: proxy_config.url if isinstance(proxy_config, ProxyConfig) else ProxyConfig.from_string(proxy_config).url
                 for protocol, proxy_config in options.proxies.items()
             }
         
         if options.proxy is not None:
-            proxy_url = options.proxy.url
+            proxy_url = options.proxy.url if isinstance(options.proxy, ProxyConfig) else ProxyConfig.from_string(options.proxy).url
             return {"http": proxy_url, "https": proxy_url}
-        
         
         return None
 
@@ -186,28 +185,31 @@ class NetworkSession:
             proxy_auth=None,
         )
 
-    def _wait_before_retry(self, retry_number: int) -> None:
-        delay = self.retry_config.delay_for_retry(retry_number)
+    def _wait_before_retry(self, retry_config: RetryConfig, retry_number: int) -> None:
+        """Wait according to the retry policy selected for this request."""
+        delay = retry_config.delay_for_retry(retry_number)
         if delay:
             time.sleep(delay)
 
     def request(self, options: RequestOptions) -> Response:
         proxies = self._resolve_proxies(options)
 
-        for attempt in range(1, self.retry_config.max_attempts + 1):
+        retry_config = options.retry_config or self.retry_config
+
+        for attempt in range(1, retry_config.max_attempts + 1):
             try:
                 raw_response = self._perform_request(options, proxies)
             except ConnectionError as error:
-                if attempt < self.retry_config.max_attempts and options.method.upper() in self.retry_config.allowed_methods:
-                    self._wait_before_retry(attempt)
+                if attempt < retry_config.max_attempts and options.method.upper() in retry_config.allowed_methods:
+                    self._wait_before_retry(retry_config, attempt)
                     continue
                 raise ConnectionRejectedError(
                     f"Failed to connect to {options.url}",
                     url=options.url,
                 ) from error
             except Timeout as error:
-                if attempt < self.retry_config.max_attempts and options.method.upper() in self.retry_config.allowed_methods:
-                    self._wait_before_retry(attempt)
+                if attempt < retry_config.max_attempts and options.method.upper() in retry_config.allowed_methods:
+                    self._wait_before_retry(retry_config, attempt)
                     continue
                 raise RequestTimeoutError(
                     f"Request to {options.url} timed out after {options.timeout} seconds",
@@ -216,9 +218,9 @@ class NetworkSession:
                 ) from error
 
             response = self._build_response(raw_response)
-            should_retry = self.retry_config.should_retry_status(options.method, response.status_code)
-            if should_retry and attempt < self.retry_config.max_attempts:
-                self._wait_before_retry(attempt)
+            should_retry = retry_config.should_retry_status(options.method, response.status_code)
+            if should_retry and attempt < retry_config.max_attempts:
+                self._wait_before_retry(retry_config, attempt)
                 continue
             return response
 

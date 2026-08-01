@@ -8,9 +8,11 @@ from phantom_curl.exceptions import (
     JSRuntimeError,
     PhantomError,
     RequestTimeoutError,
+    StaleElementError,
 )
 from phantom_curl.models import Cookie, ProxyConfig, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
 from phantom_curl.page import Page
+from phantom_curl.element import Element
 
 __all__ = [
     "PhantomClient",
@@ -19,6 +21,7 @@ __all__ = [
     "ProxyConfig",
     "RequestOptions",
     "Response",
+    "Element",
     "RetryConfig",
     "StealthConfig",
     "StorageState",
@@ -28,4 +31,5 @@ __all__ = [
     "HTTPError",
     "JSRuntimeError",
     "RequestTimeoutError",
+    "StaleElementError",
 ]
