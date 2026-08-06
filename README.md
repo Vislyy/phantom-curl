@@ -12,7 +12,7 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run cl
 
 - **The `requests`/`httpx` problem:** They can't execute JS. Many sites render content via React/Vue.
 - **The Selenium/Playwright problem:** They are heavy, require installing browsers, eat RAM, and are easily detected.
-- **The PhantomCurl solution:** A lightweight context (QuickJS) that parses HTML into a DOM tree, executes site scripts, and allows you to interact with the page, all while having a perfect TLS fingerprint of a real Chrome browser.
+- **The PhantomCurl solution:** A lightweight context (QuickJS) that parses HTML into a DOM tree, executes supported classic scripts, and combines it with the browser-like TLS profiles provided by `curl_cffi`.
 
 ## ✨ Key Features
 
@@ -36,7 +36,7 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run cl
 from phantom_curl import PhantomClient, RetryConfig, StealthConfig
 
 with PhantomClient(
-    StealthConfig(impersonate="chrome110"),
+    StealthConfig(impersonate="chrome"),
     retry_config=RetryConfig(max_attempts=3, backoff_factor=0.2),
 ) as client:
     # Make a regular HTTP request

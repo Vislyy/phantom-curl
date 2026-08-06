@@ -21,7 +21,7 @@ from curl_cffi.requests.exceptions import (
 from typing import Any, Optional, cast
 
 from phantom_curl.exceptions import ConnectionRejectedError, RequestTimeoutError
-from phantom_curl.models import Cookie, ProxyConfig, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
+from phantom_curl.models import Cookie, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
 from phantom_curl.network.session_cookies import SessionCookies
 from phantom_curl.utils.cookie import cookiejar_to_tuple
 
@@ -64,6 +64,7 @@ def _to_http_cookie(cookie: Cookie) -> HTTPCookie:
         rfc2109=False,
     )
 
+
 class NetworkSession:
     """
     Wraps a curl_cffi session, configured according to a StealthConfig.
@@ -95,7 +96,7 @@ class NetworkSession:
             impersonate=cast(Any, stealth_config.impersonate),
             headers=dict(stealth_config.extra_headers),
         )
-    
+
     def close(self) -> None:
         """
         Closes the underlying curl_cffi session and releases any
@@ -105,7 +106,7 @@ class NetworkSession:
 
     def __enter__(self) -> NetworkSession:
         return self
-    
+
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
@@ -120,7 +121,7 @@ class NetworkSession:
         Returns:
             A PhantomCurl Response object.
         """
-        
+
         response = Response(
             url=raw_response.url,
             status_code=raw_response.status_code,
@@ -146,7 +147,7 @@ class NetworkSession:
             A tuple of Cookie objects extracted from the response.
         """
         return cookiejar_to_tuple(raw_response.cookies.jar)
-    
+
     def _resolve_proxies(self, options: RequestOptions) -> Optional[dict[str, str]]:
         """
         Converts RequestOptions proxy settings into the dict format
@@ -157,15 +158,12 @@ class NetworkSession:
             proxy is configured.
         """
         if options.proxies is not None:
-            return {
-                protocol: proxy_config.url if isinstance(proxy_config, ProxyConfig) else ProxyConfig.from_string(proxy_config).url
-                for protocol, proxy_config in options.proxies.items()
-            }
-        
+            return {protocol: proxy_config.url for protocol, proxy_config in options.proxies.items()}
+
         if options.proxy is not None:
-            proxy_url = options.proxy.url if isinstance(options.proxy, ProxyConfig) else ProxyConfig.from_string(options.proxy).url
+            proxy_url = options.proxy.url
             return {"http": proxy_url, "https": proxy_url}
-        
+
         return None
 
     def _perform_request(self, options: RequestOptions, proxies: Optional[dict[str, str]]):
@@ -225,7 +223,7 @@ class NetworkSession:
             return response
 
         raise RuntimeError("Retry loop exited without a response.")
-    
+
     @property
     def cookies(self) -> SessionCookies:
         """

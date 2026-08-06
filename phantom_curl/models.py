@@ -18,8 +18,6 @@ Classes in this module fall into two categories:
 
 from __future__ import annotations
 
-import re
-
 from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -39,6 +37,7 @@ def _freeze_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(_freeze_value(item) for item in value)
     return value
+
 
 @dataclass(frozen=True, slots=True)
 class Cookie:
@@ -242,11 +241,10 @@ class RequestOptions:
         timeout: Request timeout in seconds.
         allow_redirects: Whether to automatically follow HTTP redirects.
         verify: Either a boolean, in which case it controls whether we verify
-            the server's TLS/SSL certificate, or a string, in which case it 
+            the server's TLS/SSL certificate, or a string, in which case it
             must be a path to a CA bundle to use. Defaults to True.
-        proxy: A dictionary mapping protocol schemes (e.g., "http", "https")
-            to the URL of the proxy server to route the request through (e.g.,
-            {"http": "http://10.10.1.10:3128"}).
+        proxy: One proxy configuration applied to HTTP and HTTPS requests.
+        proxies: Per-protocol proxy configurations.
     """
 
     method: str
@@ -279,16 +277,17 @@ class RequestOptions:
 
         if self.cookies is not None:
             object.__setattr__(self, "cookies", MappingProxyType(dict(self.cookies)))
-        
+
         object.__setattr__(self, "data", _freeze_value(self.data))
         object.__setattr__(self, "json_body", _freeze_value(self.json_body))
-        
+
         if self.proxy is not None and self.proxies is not None:
             raise ValueError(
                 "Cannot set both 'proxy' and 'proxies' at the same time. "
                 "Use 'proxy' for a single proxy applied to all protocols, "
                 "or 'proxies' for per-protocol proxy configuration."
             )
+
         if self.proxies is not None:
             object.__setattr__(self, "proxies", MappingProxyType(dict(self.proxies)))
 
@@ -387,7 +386,7 @@ class Response:
         if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size < 1:
             raise ValueError("chunk_size must be a positive integer.")
         for index in range(0, len(self.content), chunk_size):
-            yield self.content[index:index + chunk_size]
+            yield self.content[index : index + chunk_size]
 
     def iter_lines(self, keepends: bool = False) -> Iterator[str]:
         """Yield decoded response lines from the already-downloaded response body."""
@@ -405,7 +404,7 @@ class Response:
             raise HTTPError(
                 f"HTTP request to {self.url} failed with status code {self.status_code}",
                 status_code=self.status_code,
-                url=self.url
+                url=self.url,
             )
 
     def json(self) -> Any:
@@ -419,6 +418,7 @@ class Response:
             json.JSONDecodeError: If the response body is not valid JSON.
         """
         import json
+
         return json.loads(self.text)
 
     def get_cookie(self, name: str) -> Optional[Cookie]:
@@ -500,9 +500,8 @@ class StealthConfig:
         `extra_headers` — tuples are already immutable out of the box,
         unlike lists.
         """
-        object.__setattr__(
-            self, "extra_headers", MappingProxyType(dict(self.extra_headers))
-        )
+        object.__setattr__(self, "extra_headers", MappingProxyType(dict(self.extra_headers)))
+
 
 @dataclass(frozen=True, slots=True)
 class ProxyConfig:
@@ -517,6 +516,7 @@ class ProxyConfig:
         password: Password for proxy authentication, or None.
         scheme: Proxy protocol — "http", "https", or "socks5".
     """
+
     host: str
     port: int
     username: Optional[str] = None
@@ -537,9 +537,8 @@ class ProxyConfig:
         object.__setattr__(self, "scheme", self.scheme.lower())
         if self.scheme not in self._VALID_SCHEMES:
             raise ValueError(
-                f"Invalid proxy scheme: {self.scheme!r}. "
-                f"Must be one of: {', '.join(sorted(self._VALID_SCHEMES))}"
-        )
+                f"Invalid proxy scheme: {self.scheme!r}. Must be one of: {', '.join(sorted(self._VALID_SCHEMES))}"
+            )
 
     @property
     def url(self) -> str:
@@ -547,7 +546,6 @@ class ProxyConfig:
         auth = ""
 
         if self.username:
-            username = quote(self.username, safe="")
             auth = quote(self.username, safe="")
 
             if self.password is not None:
@@ -574,14 +572,20 @@ class ProxyConfig:
         Raises:
             ValueError: If the input string is not a valid proxy URL.
         """
-        parsed = urlparse(proxy_str)
-        if not parsed.scheme or not parsed.hostname or not parsed.port:
+        try:
+            parsed = urlparse(proxy_str)
+            port = parsed.port
+            hostname = parsed.hostname
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"Invalid proxy URL: {proxy_str!r}") from error
+
+        if not parsed.scheme or not hostname or port is None:
             raise ValueError(f"Invalid proxy URL: {proxy_str!r}")
 
         return cls(
             scheme=parsed.scheme,
-            host=parsed.hostname,
-            port=parsed.port,
+            host=hostname,
+            port=port,
             username=unquote(parsed.username) if isinstance(parsed.username, str) else None,
             password=unquote(parsed.password) if isinstance(parsed.password, str) else None,
         )

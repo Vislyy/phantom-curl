@@ -3,9 +3,9 @@
 PhantomCurl combines a network client with a lightweight JavaScript and DOM sandbox. It is deliberately smaller than a real browser: it can make TLS-impersonated HTTP requests, parse HTML, execute supported classic scripts, and expose the resulting DOM to Python.
 
 ## Network Layer
-Instead of standard `httpx`, the project uses `curl_cffi`. It allows specifying `impersonate="chrome110"`, making the request use that browser's TLS profile. One `NetworkSession` is shared by a `PhantomClient` and every page it creates, so cookies persist across requests.
+Instead of standard `httpx`, the project uses `curl_cffi`. It allows specifying `impersonate="chrome"`, making the request use a supported browser-like TLS profile. One `NetworkSession` is shared by a `PhantomClient` and every page it creates, so cookies persist across requests.
 
-`RetryConfig` belongs to this layer. It controls retryable status codes, allowed methods, and exponential backoff. Its default is one attempt, so enabling retries is an explicit client decision. `StorageState` is a JSON-serializable snapshot of the cookie jar; applications decide where and how to store it.
+`RetryConfig` belongs to this layer. It controls retryable status codes, allowed methods, and exponential backoff. Its default is one attempt, so enabling retries is an explicit client decision. A request-level `retry_config` replaces the client's policy for that request, while `max_attempts` changes only the attempt limit and preserves every other field of the selected policy. Neither form mutates the client's configuration. `StorageState` is a JSON-serializable snapshot of the cookie jar; applications decide where and how to store it.
 
 ## Environment Layer
 The environment has two parts:

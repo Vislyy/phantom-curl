@@ -82,6 +82,7 @@ class Page:
         self.script_errors: list[Exception] = []
 
         self.url: Optional[str] = None
+        self.referrer: str = ""
 
     @property
     def html(self) -> str:
@@ -155,13 +156,16 @@ class Page:
             browser does not halt page load on a single script error).
             External <script src="..."> tags are fetched and executed.
         """
+        previous_url = self.url
+
         request_options = build_request_options(method="GET", url=url)
         response = self._session.request(request_options)
 
         self.url = response.url
+        self.referrer = previous_url or ""
 
         self._reset_runtime()
-        self._dom_builder.parse_html(response.text, url=self.url)
+        self._dom_builder.parse_html(response.text, url=self.url, referrer=self.referrer)
         self._generation += 1
 
         self.script_errors = []

@@ -3,7 +3,6 @@ import pytest
 from phantom_curl.exceptions import HTTPError
 from phantom_curl.models import ProxyConfig, RequestOptions, Response, RetryConfig, StorageState
 
-from urllib.parse import quote
 
 def test_request_options_freezes_json_without_mutating_source() -> None:
     payload = {"nested": {"value": 1}, "items": ["a"]}
@@ -15,6 +14,18 @@ def test_request_options_freezes_json_without_mutating_source() -> None:
     assert options.json_body["items"] == ("a",)
     with pytest.raises(TypeError):
         options.json_body["new"] = "value"
+
+
+def test_request_options_freezes_per_protocol_proxies_without_mutating_source() -> None:
+    original_proxy = ProxyConfig(host="proxy.test", port=8080)
+    source = {"http": original_proxy}
+    options = RequestOptions(method="GET", url="https://example.test", proxies=source)
+
+    source["https"] = ProxyConfig(host="other-proxy.test", port=8443)
+
+    assert options.proxies == {"http": original_proxy}
+    with pytest.raises(TypeError):
+        options.proxies["https"] = original_proxy
 
 
 def test_proxy_url_encodes_credentials_and_ipv6_host() -> None:
@@ -40,12 +51,14 @@ def test_proxy_configuration_validates_invalid_values(kwargs, message: str) -> N
     with pytest.raises(ValueError, match=message):
         ProxyConfig(**kwargs)
 
+
 def test_proxy_config_from_string_parses_valid_url() -> None:
     proxy_str = "http://host:8080"
     proxy = ProxyConfig.from_string(proxy_str)
     assert proxy.host == "host"
     assert proxy.port == 8080
     assert proxy.url == proxy_str
+
 
 def test_proxy_config_from_string_parses_valid_url_with_credentials() -> None:
     proxy_str = "http://user%20code:pass@host:8080"
@@ -54,12 +67,14 @@ def test_proxy_config_from_string_parses_valid_url_with_credentials() -> None:
     assert proxy.password == "pass"
     assert proxy.url == proxy_str
 
+
 def test_proxy_config_from_string_parses_valid_ipv6_url() -> None:
     proxy_str = "http://[::1]:8080"
     proxy = ProxyConfig.from_string(proxy_str)
     assert proxy.host == "::1"
     assert proxy.port == 8080
     assert proxy.url == proxy_str
+
 
 def test_proxy_config_from_string_parses_valid_ipv6_url_with_credentials() -> None:
     proxy_str = "http://user:pass@[::1]:8080"
@@ -70,34 +85,35 @@ def test_proxy_config_from_string_parses_valid_ipv6_url_with_credentials() -> No
     assert proxy.port == 8080
     assert proxy.url == proxy_str
 
+
 def test_proxy_config_from_string_parses_valid_urls_with_credentials() -> None:
     proxies_to_test = {
         "http": "http://user:pass@host:1020",
         "https": "https://user%20123:pa%2F1ss@host:8080",
     }
-    proxies = {
-        protocol: proxy.url if isinstance(proxy, ProxyConfig) else ProxyConfig.from_string(proxy)
-        for protocol, proxy in proxies_to_test.items()
-    }
+    proxy_configs = {protocol: ProxyConfig.from_string(proxy_url) for protocol, proxy_url in proxies_to_test.items()}
 
-    assert proxies["http"].username == "user"
-    assert proxies["http"].port == 1020
-    assert proxies["https"].username == "user 123"
-    assert proxies["https"].port == 8080
+    assert proxy_configs["http"].username == "user"
+    assert proxy_configs["http"].port == 1020
+    assert proxy_configs["https"].username == "user 123"
+    assert proxy_configs["https"].port == 8080
 
-    assert proxies["http"].url == proxies_to_test["http"]
-    assert proxies["https"].url == proxies_to_test["https"]
+    assert proxy_configs["http"].url == proxies_to_test["http"]
+    assert proxy_configs["https"].url == proxies_to_test["https"]
+
 
 def test_proxy_config_from_string_raises_for_invalid_urls() -> None:
     invalid_urls = [
         "http://host",  # missing port
         "http://:8080",  # missing host
         "http://user:pass@:8080",  # missing host
+        "http://host:not-a-port",  # malformed port
         "not-a-url",  # not a URL at all
     ]
     for url in invalid_urls:
         with pytest.raises(ValueError, match="Invalid proxy URL"):
             ProxyConfig.from_string(url)
+
 
 def test_proxy_config_from_string_allows_username_without_password() -> None:
     proxy = ProxyConfig.from_string("http://user@host:8080")
@@ -105,6 +121,7 @@ def test_proxy_config_from_string_allows_username_without_password() -> None:
     assert proxy.username == "user"
     assert proxy.password is None
     assert proxy.url == "http://user@host:8080"
+
 
 def test_response_headers_are_case_insensitive_and_errors_are_exposed() -> None:
     response = Response(

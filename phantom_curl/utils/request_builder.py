@@ -1,8 +1,17 @@
 from __future__ import annotations
 
-from typing import Optional, Mapping, Any
+from typing import Any, Mapping, Optional, Union
 
 from phantom_curl.models import ProxyConfig, RequestOptions, RetryConfig
+
+
+ProxyInput = Union[ProxyConfig, str]
+
+
+def _to_proxy_config(proxy: ProxyInput) -> ProxyConfig:
+    """Normalize a public proxy value into the internal immutable model."""
+    return ProxyConfig.from_string(proxy) if isinstance(proxy, str) else proxy
+
 
 def build_request_options(
     method: str,
@@ -15,13 +24,18 @@ def build_request_options(
     timeout: float = 30.0,
     allow_redirects: bool = True,
     verify: bool = True,
-    proxy: Optional[ProxyConfig] = None,
-    proxies: Optional[Mapping[str, ProxyConfig]] = None,
+    proxy: Optional[ProxyInput] = None,
+    proxies: Optional[Mapping[str, ProxyInput]] = None,
     retry_config: Optional[RetryConfig] = None,
 ) -> RequestOptions:
     """
     Internal helper to build RequestOptions from the provided parameters.
     """
+    normalized_proxy = _to_proxy_config(proxy) if proxy is not None else None
+    normalized_proxies = (
+        {protocol: _to_proxy_config(value) for protocol, value in proxies.items()} if proxies is not None else None
+    )
+
     return RequestOptions(
         method=method,
         url=url,
@@ -33,7 +47,7 @@ def build_request_options(
         timeout=timeout,
         allow_redirects=allow_redirects,
         verify=verify,
-        proxy=proxy,
-        proxies=proxies,
-        retry_config=retry_config
+        proxy=normalized_proxy,
+        proxies=normalized_proxies,
+        retry_config=retry_config,
     )

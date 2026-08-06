@@ -156,6 +156,7 @@ def http_server() -> Iterator[str]:
         thread.join()
         server.server_close()
 
+
 @pytest.fixture
 def network_session() -> Iterator[NetworkSession]:
     session = NetworkSession(StealthConfig())
@@ -172,3 +173,9 @@ def phantom_client() -> Iterator[PhantomClient]:
         yield client
     finally:
         client.close()
+
+
+@pytest.fixture(autouse=True)
+def reset_flaky_request_counts() -> None:
+    _TestHandler.flaky_requests = 0
+    _TestHandler.flaky_override_requests = 0

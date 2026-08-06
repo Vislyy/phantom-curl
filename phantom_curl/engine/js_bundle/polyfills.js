@@ -77,16 +77,16 @@ if (typeof globalThis.Buffer === "undefined") {
 if (typeof globalThis.navigator === "undefined") {
   globalThis.navigator = {
     userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
     appName: "Netscape",
     appVersion: "5.0 (Windows)",
     platform: "Win32",
-    language: "uk-UA",
-    languages: ["uk-UA", "uk", "en-US", "en"],
+    language: "en-US",
+    languages: ["en-US", "en"],
     cookieEnabled: true,
     onLine: true,
     webdriver: false,
-    hardwareConcurrency: 8,
+    hardwareConcurrency: 4,
     maxTouchPoints: 0,
   };
 }
@@ -214,3 +214,13 @@ if (
   ensureInstalled();
   globalThis.__phantom_ensure_write = ensureInstalled;
 })();
+
+if (typeof globalThis.console === "undefined") {
+  globalThis.console = {
+    log: typeof print === "function" ? print : function () {},
+    error: typeof print === "function" ? print : function () {},
+    warn: typeof print === "function" ? print : function () {},
+    info: typeof print === "function" ? print : function () {},
+    debug: typeof print === "function" ? print : function () {},
+  };
+}

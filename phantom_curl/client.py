@@ -9,6 +9,7 @@ delegating to the Network Layer.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Union, Optional, Mapping, Any
 
 from phantom_curl.models import (
@@ -78,6 +79,16 @@ class PhantomClient:
         """
         self.close()
 
+    def _resolve_retry_config(
+        self,
+        max_attempts: Optional[int],
+        retry_config: Optional[RetryConfig],
+    ) -> Optional[RetryConfig]:
+        """Apply a per-request attempt limit without losing the active retry policy."""
+        if max_attempts is None:
+            return retry_config
+        return replace(retry_config or self.retry_config, max_attempts=max_attempts)
+
     def get(
         self,
         url: str,
@@ -89,6 +100,7 @@ class PhantomClient:
         verify: bool = True,
         proxy: Union[ProxyConfig, str, None] = None,
         proxies: Optional[Mapping[str, Union[ProxyConfig, str]]] = None,
+        max_attempts: Optional[int] = None,
         retry_config: Optional[RetryConfig] = None,
     ) -> Response:
         """
@@ -105,6 +117,7 @@ class PhantomClient:
         Returns:
             The server's response.
         """
+        retry_config = self._resolve_retry_config(max_attempts, retry_config)
 
         options = build_request_options(
             method="GET",
@@ -134,6 +147,7 @@ class PhantomClient:
         verify: bool = True,
         proxy: Union[ProxyConfig, str, None] = None,
         proxies: Optional[Mapping[str, Union[ProxyConfig, str]]] = None,
+        max_attempts: Optional[int] = None,
         retry_config: Optional[RetryConfig] = None,
     ) -> Response:
         """
@@ -150,6 +164,7 @@ class PhantomClient:
         Returns:
             The server's response.
         """
+        retry_config = self._resolve_retry_config(max_attempts, retry_config)
 
         options = build_request_options(
             method="HEAD",
@@ -179,6 +194,7 @@ class PhantomClient:
         verify: bool = True,
         proxy: Union[ProxyConfig, str, None] = None,
         proxies: Optional[Mapping[str, Union[ProxyConfig, str]]] = None,
+        max_attempts: Optional[int] = None,
         retry_config: Optional[RetryConfig] = None,
     ) -> Response:
         """
@@ -195,6 +211,7 @@ class PhantomClient:
         Returns:
             The server's response.
         """
+        retry_config = self._resolve_retry_config(max_attempts, retry_config)
 
         options = build_request_options(
             method="OPTIONS",
@@ -225,6 +242,7 @@ class PhantomClient:
         verify: bool = True,
         proxy: Union[ProxyConfig, str, None] = None,
         proxies: Optional[Mapping[str, Union[ProxyConfig, str]]] = None,
+        max_attempts: Optional[int] = None,
         retry_config: Optional[RetryConfig] = None,
     ) -> Response:
         """
@@ -242,6 +260,7 @@ class PhantomClient:
         Returns:
             The server's response.
         """
+        retry_config = self._resolve_retry_config(max_attempts, retry_config)
 
         options = build_request_options(
             method="POST",
@@ -272,6 +291,7 @@ class PhantomClient:
         verify: bool = True,
         proxy: Union[ProxyConfig, str, None] = None,
         proxies: Optional[Mapping[str, Union[ProxyConfig, str]]] = None,
+        max_attempts: Optional[int] = None,
         retry_config: Optional[RetryConfig] = None,
     ) -> Response:
         """
@@ -289,6 +309,7 @@ class PhantomClient:
         Returns:
             The server's response.
         """
+        retry_config = self._resolve_retry_config(max_attempts, retry_config)
 
         options = build_request_options(
             method="PUT",
@@ -319,6 +340,7 @@ class PhantomClient:
         verify: bool = True,
         proxy: Union[ProxyConfig, str, None] = None,
         proxies: Optional[Mapping[str, Union[ProxyConfig, str]]] = None,
+        max_attempts: Optional[int] = None,
         retry_config: Optional[RetryConfig] = None,
     ) -> Response:
         """
@@ -336,6 +358,7 @@ class PhantomClient:
         Returns:
             The server's response.
         """
+        retry_config = self._resolve_retry_config(max_attempts, retry_config)
 
         options = build_request_options(
             method="PATCH",
@@ -364,6 +387,7 @@ class PhantomClient:
         verify: bool = True,
         proxy: Union[ProxyConfig, str, None] = None,
         proxies: Optional[Mapping[str, Union[ProxyConfig, str]]] = None,
+        max_attempts: Optional[int] = None,
         retry_config: Optional[RetryConfig] = None,
     ) -> Response:
         """
@@ -379,6 +403,7 @@ class PhantomClient:
         Returns:
             The server's response.
         """
+        retry_config = self._resolve_retry_config(max_attempts, retry_config)
 
         options = build_request_options(
             method="DELETE",

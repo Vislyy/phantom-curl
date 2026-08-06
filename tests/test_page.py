@@ -47,3 +47,18 @@ def test_page_records_inline_script_errors_and_continues_loading(phantom_client,
     assert page.body is not None
     assert len(page.script_errors) == 1
     assert isinstance(page.script_errors[0], JSRuntimeError)
+
+
+def test_page_referrer_is_set_correctly(phantom_client, http_server: str) -> None:
+    first_url = f"{http_server}/page/?step=one"
+    second_url = f"{http_server}/page/?step=two"
+
+    page = phantom_client.new_page(first_url)
+
+    assert page.status_code == 200
+    assert page.referrer == page.eval("document.referrer") == ""
+
+    page.goto(second_url)
+
+    assert page.status_code == 200
+    assert page.referrer == page.eval("document.referrer") == first_url

@@ -9,10 +9,11 @@ for parsing HTML strings into a live, queryable DOM tree.
 
 from __future__ import annotations
 
+import ipaddress
 import json
-
 from pathlib import Path
 from typing import Optional
+from urllib.parse import SplitResult, urlsplit
 
 from phantom_curl.engine.context import JSContext
 from phantom_curl.exceptions import JSRuntimeError, DOMBuildError, EngineInitError
@@ -20,6 +21,7 @@ from phantom_curl.exceptions import JSRuntimeError, DOMBuildError, EngineInitErr
 _JS_BUNDLE_DIR = Path(__file__).parent / "js_bundle"
 _POLYFILLS_PATH = _JS_BUNDLE_DIR / "polyfills.js"
 _LINKEDOM_PATH = _JS_BUNDLE_DIR / "linkedom.js"
+
 
 class DOMBuilder:
     """
@@ -56,7 +58,28 @@ class DOMBuilder:
                 f"incompatible with the current QuickJS runtime."
             ) from e
 
-    def parse_html(self, html: str, url: Optional[str] = None) -> None:
+    def _format_host_for_location(self, parsed_url: SplitResult) -> str:
+        """Return browser-style ``location.host`` without credentials.
+
+        The result contains the hostname and, when explicitly present, the
+        port. IPv6 literals are wrapped in square brackets. URLs without an
+        authority component, such as ``about:blank``, return an empty string.
+        """
+        hostname = parsed_url.hostname
+        if hostname is None:
+            return ""
+
+        try:
+            ip_address = ipaddress.ip_address(hostname)
+        except ValueError:
+            final_host = hostname
+        else:
+            final_host = f"[{ip_address}]" if ip_address.version == 6 else str(ip_address)
+
+        port = parsed_url.port
+        return f"{final_host}:{port}" if port is not None else final_host
+
+    def parse_html(self, html: str, url: Optional[str] = None, referrer: Optional[str] = None) -> None:
         """
         Parses an HTML string into a DOM document, stored internally as
         a global variable inside the JS context for use by subsequent
@@ -69,26 +92,45 @@ class DOMBuilder:
         Args:
             html: The raw HTML source to parse.
             url: The page URL (optional) used to initialize window.location.
+            referrer: The referrer URL (optional) used to initialize
+                window.document.referrer.
 
         Raises:
             DOMBuildError: If the HTML could not be parsed.
         """
+        parsed_url = urlsplit(url or "about:blank")
+
         safe_html_literal = json.dumps(html)
-        safe_url_literal = json.dumps(url or "")
+        safe_url_literal = json.dumps(parsed_url.geturl())
+
+        host = self._format_host_for_location(parsed_url)
+        hostname = parsed_url.hostname or ""
+        port = str(parsed_url.port) if parsed_url.port is not None else ""
+        pathname = parsed_url.path if parsed_url.scheme == "about" else parsed_url.path or "/"
+        origin = (
+            f"{parsed_url.scheme}://{host}"
+            if parsed_url.scheme in {"http", "https"} and host
+            else "null"
+        )
+
         code = f"""
         const parsed = parseHTML({safe_html_literal});
         globalThis.window = parsed.window;
         globalThis.document = parsed.document;
         globalThis.__phantom_document = parsed.document;
 
+        globalThis.document.referrer = {json.dumps(referrer or "")};
+
         const loc = {{
+            origin: {json.dumps(origin)},
             href: {safe_url_literal},
-            protocol: {safe_url_literal}.split(':')[0] + ':',
-            host: ({safe_url_literal}.split('/')[2] || ''),
-            hostname: ({safe_url_literal}.split('/')[2] || '').split(':')[0],
-            pathname: '/' + ({safe_url_literal}.split('/').slice(3).join('/')),
-            search: '',
-            hash: ''
+            protocol: {json.dumps(parsed_url.scheme + ":")},
+            host: {json.dumps(host)},
+            hostname: {json.dumps(hostname)},
+            port: {json.dumps(port)},
+            pathname: {json.dumps(pathname)},
+            search: {json.dumps("?" + parsed_url.query if parsed_url.query else "")},
+            hash: {json.dumps("#" + parsed_url.fragment if parsed_url.fragment else "")}
         }};
         globalThis.window.location = loc;
         globalThis.location = loc;
@@ -104,10 +146,7 @@ class DOMBuilder:
         try:
             self._context.eval(code)
         except JSRuntimeError as e:
-            raise DOMBuildError(
-                message=f"Failed to parse HTML: {e.message}",
-                html_snippet=html[:200]
-            ) from e
+            raise DOMBuildError(message=f"Failed to parse HTML: {e.message}", html_snippet=html[:200]) from e
 
     def has_document(self) -> bool:
         """
@@ -119,7 +158,7 @@ class DOMBuilder:
         """
         result = self._context.eval("typeof __phantom_document !== 'undefined'")
         return bool(result)
-    
+
     def serialize(self) -> str:
         """
         Returns the full HTML of the currently loaded document.
@@ -132,11 +171,8 @@ class DOMBuilder:
                 serialization fails.
         """
         if not self.has_document():
-            raise DOMBuildError(
-                message="No document is currently loaded. Call parse_html() first.",
-                html_snippet=""
-            )
-        
+            raise DOMBuildError(message="No document is currently loaded. Call parse_html() first.", html_snippet="")
+
         try:
             result = self._context.eval("__phantom_document.documentElement.outerHTML")
             return str(result)
@@ -192,9 +228,7 @@ class DOMBuilder:
         try:
             return json.loads(self._context.eval(js))
         except JSRuntimeError as e:
-            raise DOMBuildError(
-                f"Failed to collect document scripts: {e.message}"
-            ) from e
+            raise DOMBuildError(f"Failed to collect document scripts: {e.message}") from e
 
     def get_inline_scripts(self) -> list[str]:
         """
