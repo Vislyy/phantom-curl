@@ -5,7 +5,7 @@ import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import Iterator
+from typing import Callable, Iterator
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -19,6 +19,7 @@ class _TestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     flaky_requests = 0
     flaky_override_requests = 0
+    math_module_requests = 0
 
     def log_message(self, format: str, *args: object) -> None:
         """Keep test output quiet."""
@@ -58,6 +59,33 @@ class _TestHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/set-cookie":
             self._send_json(200, {"ok": True}, **{"Set-Cookie": "session_id=abc123; Path=/"})
+            return
+
+        if parsed.path == "/set-http-only-cookie":
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Set-Cookie", "visible=yes; Path=/")
+            self.send_header("Set-Cookie", "hidden=no; Path=/; HttpOnly")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if parsed.path == "/api/value":
+            cookies = SimpleCookie(self.headers.get("Cookie", ""))
+            self._send_json(
+                200,
+                {
+                    "value": "from-api",
+                    "referer": self.headers.get("Referer"),
+                    "cookies": {name: morsel.value for name, morsel in cookies.items()},
+                },
+            )
+            return
+
+        if parsed.path == "/api/set-cookie":
+            self._send_json(200, {"ok": True}, **{"Set-Cookie": "from_fetch=yes; Path=/"})
             return
 
         if parsed.path == "/slow":
@@ -104,6 +132,172 @@ class _TestHandler(BaseHTTPRequestHandler):
             self._send(200, body, "text/javascript")
             return
 
+        if parsed.path == "/fetch-page/":
+            body = b"""
+                <html><body>
+                    <script>
+                        fetch('/api/value')
+                            .then(response => response.json())
+                            .then(data => document.body.setAttribute('fetch-value', data.value));
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/timer-page/":
+            body = b"""
+                <html><body>
+                    <script>
+                        queueMicrotask(() => document.body.setAttribute('microtask-ran', 'yes'));
+                        setTimeout(() => document.body.setAttribute('timeout-ran', 'yes'), 0);
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/module-page/":
+            body = b"""
+                <html><body>
+                    <script type="module">
+                        import { answer } from '../modules/math.js';
+                        document.body.setAttribute('first-module-answer', String(answer));
+                    </script>
+                    <script type="module">
+                        import { answer as secondAnswer } from '../modules/math.js';
+                        document.body.setAttribute('second-module-answer', String(secondAnswer));
+                    </script>
+                    <script type="module">
+                        import moduleName, * as math from '../modules/math.js';
+                        document.body.setAttribute('module-default-and-namespace', moduleName + ':' + math.answer);
+                    </script>
+                    <script type="module" src="../modules/external.js"></script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/cycle-module-page/":
+            body = b"""
+                <html><body>
+                    <script type="module">
+                        import { a } from '../modules/a.js';
+                        document.body.setAttribute('cycle-module-answer', a);
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/missing-module-page/":
+            body = b"""
+                <html><body>
+                    <script type="module">import '../modules/missing.js';</script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/modules/math.js":
+            type(self).math_module_requests += 1
+            self._send(200, b"export const answer = 42;\nexport default 'math';", "text/javascript")
+            return
+
+        if parsed.path == "/modules/external.js":
+            self._send(200, b"document.body.setAttribute('external-module-ran', 'yes');", "text/javascript")
+            return
+
+        if parsed.path == "/modules/a.js":
+            self._send(200, b"import './b.js'; export const a = 'a';", "text/javascript")
+            return
+
+        if parsed.path == "/modules/b.js":
+            self._send(200, b"import './a.js'; export const b = 'b';", "text/javascript")
+            return
+
+        if parsed.path == "/dynamic-script-page/":
+            body = b"""
+                <html><body>
+                    <script>
+                        const script = document.createElement("script");
+                        script.src = "/dynamic-script.js";
+                        document.head.appendChild(script);
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/dynamic-script.js":
+            body = b"document.body.setAttribute('dynamic-script-ran', 'yes');"
+            self._send(200, body, "text/javascript")
+            return
+
+        if parsed.path == "/dynamic-script-chain-page/":
+            body = b"""
+                <html><body>
+                    <script>
+                        const firstScript = document.createElement("script");
+                        firstScript.src = "/dynamic-script-first.js";
+                        document.head.appendChild(firstScript);
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/dynamic-script-first.js":
+            body = b"""
+                document.body.setAttribute('first-dynamic-script-ran', 'yes');
+                const secondScript = document.createElement('script');
+                secondScript.src = '/dynamic-script-second.js';
+                document.head.appendChild(secondScript);
+            """
+            self._send(200, body, "text/javascript")
+            return
+
+        if parsed.path == "/dynamic-script-second.js":
+            body = b"document.body.setAttribute('second-dynamic-script-ran', 'yes');"
+            self._send(200, body, "text/javascript")
+            return
+
+        if parsed.path == "/dynamic-script-relative-page/":
+            body = b"""
+                <html><body>
+                    <script>
+                        const script = document.createElement("script");
+                        script.src = "assets/relative.js";
+                        document.head.appendChild(script);
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/dynamic-script-relative-page/assets/relative.js":
+            body = b"document.body.setAttribute('relative-dynamic-script-ran', 'yes');"
+            self._send(200, body, "text/javascript")
+            return
+
+        if parsed.path == "/dynamic-script-error-page/":
+            body = b"""
+                <html><body>
+                    <script>
+                        const script = document.createElement("script");
+                        script.src = "/dynamic-script-error.js";
+                        document.head.appendChild(script);
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/dynamic-script-error.js":
+            body = b"throw new Error('dynamic script failure');"
+            self._send(200, body, "text/javascript")
+            return
+
         if parsed.path == "/broken-page/":
             body = b"<html><body><script>throw new Error('test script failure');</script></body></html>"
             self._send(200, body, "text/html")
@@ -133,7 +327,23 @@ class _TestHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
-        if urlparse(self.path).path != "/post":
+        path = urlparse(self.path).path
+        if path == "/api/echo":
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(content_length)
+            cookies = SimpleCookie(self.headers.get("Cookie", ""))
+            self._send_json(
+                200,
+                {
+                    "body": body.decode(),
+                    "header": self.headers.get("X-Page"),
+                    "referer": self.headers.get("Referer"),
+                    "cookies": {name: morsel.value for name, morsel in cookies.items()},
+                },
+            )
+            return
+
+        if path != "/post":
             self._send_json(404, {"error": "not found"})
             return
 
@@ -179,3 +389,10 @@ def phantom_client() -> Iterator[PhantomClient]:
 def reset_flaky_request_counts() -> None:
     _TestHandler.flaky_requests = 0
     _TestHandler.flaky_override_requests = 0
+    _TestHandler.math_module_requests = 0
+
+
+@pytest.fixture
+def math_module_request_count() -> Callable[[], int]:
+    """Return how many times the math module fixture was requested."""
+    return lambda: _TestHandler.math_module_requests

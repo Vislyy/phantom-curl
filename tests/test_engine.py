@@ -101,6 +101,14 @@ def test_quickjs_context_rejects_esm_export_in_classic_script_mode() -> None:
         context.eval("export const token = 1")
 
 
+def test_quickjs_context_executes_pending_promise_jobs() -> None:
+    context = JSContext()
+    context.eval("globalThis.promise_result = null; Promise.resolve(42).then(value => promise_result = value);")
+
+    assert context.execute_pending_jobs() == 1
+    assert context.eval("promise_result") == 42
+
+
 def test_dom_builder_exposes_browser_globals_through_window() -> None:
     context = JSContext()
     builder = DOMBuilder(context)

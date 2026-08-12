@@ -23,8 +23,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, FrozenSet, Iterator, Mapping, Optional
 from urllib.parse import quote, unquote, urlparse
+from language_tags import tags
 
-from phantom_curl.utils import CaseInsensitiveDict
+from phantom_curl.utils import CaseInsensitiveDict, is_valid_origin
 from phantom_curl.exceptions import HTTPError
 
 
@@ -50,7 +51,7 @@ class Cookie:
 
     1. Correctly deciding whether a cookie should be sent with a given
        request, based on its `domain`, `path`, and `secure` attributes.
-    2. Exporting/importing session state (see StorageState, planned),
+    2. Exporting/importing session state (see StorageState),
        so a user can persist a scraping session to disk and restore it
        later without losing cookie semantics.
 
@@ -78,12 +79,19 @@ class Cookie:
     http_only: bool = False
     same_site: Optional[str] = None
 
+@dataclass(frozen=True, slots=True)
+class OriginStorage:
+    """One web origin and its serializable local-storage entries."""
+
+    origin: str
+    local_storage: tuple[tuple[str, str], ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class StorageState:
-    """A serializable snapshot of the cookies in a client session."""
+    """A serializable snapshot of session cookies and origin-scoped local storage."""
 
     cookies: tuple[Cookie, ...] = ()
+    origins: tuple[OriginStorage, ...] = ()
 
     def to_dict(self) -> dict[str, list[dict[str, Any]]]:
         """Return a JSON-compatible representation of this state."""
@@ -100,7 +108,16 @@ class StorageState:
                     "same_site": cookie.same_site,
                 }
                 for cookie in self.cookies
-            ]
+            ],
+            "origins": [
+                {
+                    "origin": origin_storage.origin,
+                    "localStorage": [
+                        {"name": name, "value": value}
+                        for name, value in origin_storage.local_storage
+                    ],
+                } for origin_storage in self.origins
+            ],
         }
 
     def to_json(self) -> str:
@@ -113,6 +130,7 @@ class StorageState:
     def from_dict(cls, data: Mapping[str, Any]) -> "StorageState":
         """Create a state snapshot from a validated JSON-like mapping."""
         raw_cookies = data.get("cookies")
+
         if not isinstance(raw_cookies, list):
             raise ValueError("Storage state must contain a 'cookies' list.")
 
@@ -158,7 +176,59 @@ class StorageState:
                 )
             )
 
-        return cls(cookies=tuple(cookies))
+        raw_origins = data.get("origins", [])
+        if not isinstance(raw_origins, list):
+            raise ValueError("Storage state 'origins' must be a list.")
+
+        origins: list[OriginStorage] = []
+
+        seen_origins = set()
+
+        for raw_origin in raw_origins:
+            if not isinstance(raw_origin, MappingABC):
+                raise ValueError("Every origin in storage state must be an object.")
+
+            origin = raw_origin.get("origin")
+            raw_local_storage = raw_origin.get("localStorage")
+
+            if not isinstance(origin, str) or not is_valid_origin(origin):
+                raise ValueError("Every origin must be a URL")
+            if origin in seen_origins:
+                raise ValueError(f"Storage state contains a duplicate origin: {origin}")
+            if not isinstance(raw_local_storage, list):
+                raise ValueError("Every stored local storage must be a list.")
+
+            seen_origins.add(origin)
+            local_storage: list[tuple[str, str]] = []
+
+            seen_local_storage_names = set()
+
+            for item in raw_local_storage:
+                if not isinstance(item, MappingABC):
+                    raise ValueError("Every localStorage entry must be an object.")
+
+                name = item.get("name")
+                value = item.get("value")
+
+                if not isinstance(name, str) or not isinstance(value, str):
+                    raise ValueError("localStorage names and values must be a string.")
+
+                if name in seen_local_storage_names:
+                    raise ValueError(
+                        f"Origin '{origin}' contains a duplicate localStorage name: '{name}'."
+                    )
+
+                seen_local_storage_names.add(name)
+                local_storage.append((name, value))
+
+            origins.append(
+                OriginStorage(
+                    origin=origin,
+                    local_storage=tuple(local_storage)
+                )
+            )
+
+        return cls(cookies=tuple(cookies), origins=tuple(origins))
 
     @classmethod
     def from_json(cls, serialized: str) -> "StorageState":
@@ -500,6 +570,14 @@ class StealthConfig:
         `extra_headers` — tuples are already immutable out of the box,
         unlike lists.
         """
+        languages = tuple(self.languages)
+        if not languages or any(
+            not isinstance(language, str) or not tags.check(language) or not language
+            for language in languages
+        ):
+            raise ValueError("languages must contain at least one non-empty language code")
+
+        object.__setattr__(self, "languages", languages)
         object.__setattr__(self, "extra_headers", MappingProxyType(dict(self.extra_headers)))
 
 

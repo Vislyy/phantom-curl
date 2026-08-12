@@ -20,17 +20,21 @@ calling goto() again replaces the previously loaded document.
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
+import time
 
 from typing import Any, ClassVar, FrozenSet, Optional
 from urllib.parse import urljoin
 
+from phantom_curl.bridge.interceptor import FetchInterceptor
+from phantom_curl.bridge.event_loop import TimerBridge
+from phantom_curl.bridge.module_loader import ModuleLoader
 from phantom_curl.engine.context import JSContext
 from phantom_curl.engine.dom_builder import DOMBuilder
 from phantom_curl.element import Element
 from phantom_curl.models import Response
-from phantom_curl.exceptions import JSRuntimeError
+from phantom_curl.exceptions import InterceptorError, JSRuntimeError
 from phantom_curl.network.session import NetworkSession
 from phantom_curl.utils.request_builder import build_request_options
 
@@ -75,8 +79,13 @@ class Page:
             which must not leak between unrelated pages/tabs.
         """
         self._session = session
+        self._stealth_config = session.stealth_config
+        self._fetch_interceptor: Optional[FetchInterceptor] = None
+        self._module_loader: Optional[ModuleLoader] = None
+        self._timer_bridge: Optional[TimerBridge] = None
         self._reset_runtime()
         self._generation = 0
+        self._executed_scripts_ids: set[str] = set()
 
         self.response: Optional[Response] = None
         self.script_errors: list[Exception] = []
@@ -122,7 +131,260 @@ class Page:
     def _reset_runtime(self) -> None:
         """Create a fresh JS environment for each navigation."""
         self._context = JSContext()
-        self._dom_builder = DOMBuilder(self._context)
+        self._fetch_interceptor = None
+        self._module_loader = None
+        self._timer_bridge = None
+        self._dom_builder = DOMBuilder(
+            self._context,
+            navigator_languages=self._stealth_config.languages,
+        )
+        self._executed_scripts_ids = set()
+
+    def _install_fetch_bridge(self) -> None:
+        """Expose the supported asynchronous fetch subset to page scripts."""
+        if self.url is None:
+            return
+
+        self._fetch_interceptor = FetchInterceptor(self._session, self.url)
+        self._context.eval(
+            """
+            globalThis.__phantom_pending_fetches = [];
+            globalThis.__phantom_fetch_resolvers = Object.create(null);
+            globalThis.__phantom_fetch_id = 0;
+
+            globalThis.__phantom_take_fetches = function () {
+                const pending = globalThis.__phantom_pending_fetches;
+                globalThis.__phantom_pending_fetches = [];
+                return JSON.stringify(pending);
+            };
+
+            globalThis.__phantom_complete_fetch = function (id, resultJson) {
+                const resolver = globalThis.__phantom_fetch_resolvers[id];
+                delete globalThis.__phantom_fetch_resolvers[id];
+                if (!resolver) {
+                    return;
+                }
+
+                const result = JSON.parse(resultJson);
+                if (result.error) {
+                    resolver.reject(new TypeError(result.error));
+                    return;
+                }
+
+                const body = result.text;
+                resolver.resolve({
+                    ok: result.ok,
+                    status: result.status,
+                    url: result.url,
+                    text: function () { return Promise.resolve(body); },
+                    json: function () {
+                        try {
+                            return Promise.resolve(JSON.parse(body));
+                        } catch (error) {
+                            return Promise.reject(error);
+                        }
+                    }
+                });
+            };
+
+            globalThis.fetch = function fetch(input, init) {
+                return new Promise(function (resolve, reject) {
+                    if (typeof input !== 'string') {
+                        reject(new TypeError('PhantomCurl fetch requires a string URL'));
+                        return;
+                    }
+
+                    const options = init === undefined ? {} : init;
+                    if (options === null || typeof options !== 'object') {
+                        reject(new TypeError('PhantomCurl fetch options must be an object'));
+                        return;
+                    }
+
+                    const id = ++globalThis.__phantom_fetch_id;
+                    const method = options.method === undefined ? 'GET' : String(options.method);
+                    const headers = options.headers === undefined ? {} : options.headers;
+                    const body = options.body === undefined ? null : options.body;
+                    globalThis.__phantom_fetch_resolvers[id] = {resolve: resolve, reject: reject};
+                    globalThis.__phantom_pending_fetches.push({
+                        id: id,
+                        url: input,
+                        method: method,
+                        headers: headers,
+                        body: body
+                    });
+                });
+            };
+            """
+        )
+
+    def _install_cookie_bridge(self) -> None:
+        """Expose the page-visible portion of the session cookie jar to JavaScript."""
+        if self.url is None:
+            return
+
+        cookie_string = self._session.cookies.document_cookie_string(self.url)
+        self._context.eval(
+            """
+            const phantomCookieStore = {value: ""};
+            globalThis.__phantom_pending_cookie_writes = [];
+
+            globalThis.__phantom_take_cookie_writes = function () {
+                const pending = globalThis.__phantom_pending_cookie_writes;
+                globalThis.__phantom_pending_cookie_writes = [];
+                return JSON.stringify(pending);
+            };
+
+            globalThis.__phantom_replace_document_cookie = function (value) {
+                phantomCookieStore.value = value;
+            };
+
+            Object.defineProperty(globalThis.document, 'cookie', {
+                configurable: true,
+                get: function () {
+                    return phantomCookieStore.value;
+                },
+                set: function (cookie) {
+                    if (typeof cookie !== 'string') {
+                        return;
+                    }
+
+                    const pair = cookie.split(';', 1)[0];
+                    const separator = pair.indexOf('=');
+                    if (separator <= 0) {
+                        return;
+                    }
+
+                    const name = pair.slice(0, separator).trim();
+                    const value = pair.slice(separator + 1);
+                    const values = Object.create(null);
+                    if (phantomCookieStore.value) {
+                        for (const item of phantomCookieStore.value.split('; ')) {
+                            const itemSeparator = item.indexOf('=');
+                            values[item.slice(0, itemSeparator)] = item.slice(itemSeparator + 1);
+                        }
+                    }
+                    values[name] = value;
+                    phantomCookieStore.value = Object.keys(values)
+                        .map(key => key + '=' + values[key])
+                        .join('; ');
+                    globalThis.__phantom_pending_cookie_writes.push(cookie);
+                }
+            });
+            """
+        )
+        self._context.eval(f"globalThis.__phantom_replace_document_cookie({json.dumps(cookie_string)});")
+
+    def _install_timer_bridge(self) -> None:
+        """Install the page-local timer APIs before page scripts run."""
+        self._timer_bridge = TimerBridge(self._context)
+
+    def _flush_cookie_writes(self) -> None:
+        """Persist queued document.cookie writes and refresh the JS-visible value."""
+        if self.url is None:
+            return
+
+        writes = json.loads(self._context.eval("globalThis.__phantom_take_cookie_writes()"))
+        for cookie_string in writes:
+            if not isinstance(cookie_string, str):
+                raise InterceptorError("cookie bridge received invalid cookie data")
+            self._session.cookies.set_document_cookie(cookie_string, self.url)
+
+        cookie_string = self._session.cookies.document_cookie_string(self.url)
+        self._context.eval(f"globalThis.__phantom_replace_document_cookie({json.dumps(cookie_string)});")
+
+    def _flush_fetch_requests(self) -> None:
+        """Send queued fetch requests and settle their JavaScript Promises."""
+        if self._fetch_interceptor is None:
+            return
+
+        while True:
+            self._context.execute_pending_jobs()
+            self._flush_cookie_writes()
+            pending = json.loads(self._context.eval("globalThis.__phantom_take_fetches()"))
+            if not pending:
+                return
+
+            for request in pending:
+                if not isinstance(request, dict) or not isinstance(request.get("id"), int):
+                    raise InterceptorError("fetch bridge received invalid queued request data")
+
+                result = self._fetch_interceptor.handle(request)
+                self._flush_cookie_writes()
+                self._context.eval(
+                    "globalThis.__phantom_complete_fetch("
+                    f"{request['id']}, {json.dumps(json.dumps(result))}"
+                    ");"
+                )
+
+    def _drain_runtime(self, timeout: float = 0.0) -> None:
+        """Run microtasks, queued fetches and timers due within ``timeout`` seconds."""
+        deadline = time.monotonic() + timeout
+        while True:
+            self._flush_fetch_requests()
+            if self._timer_bridge is None or not self._timer_bridge.run_due_timers():
+                if self._timer_bridge is None:
+                    return
+                delay = self._timer_bridge.milliseconds_until_next_timer()
+                if delay is None or time.monotonic() + delay / 1000 > deadline:
+                    return
+                time.sleep(delay / 1000)
+
+    def _install_module_loader(self) -> None:
+        """Create the page-local module loader before page scripts execute."""
+        if self.url is not None:
+            self._module_loader = ModuleLoader(self._context, self._session, self.url)
+
+    def _execute_module_script(self, entry: dict[str, str]) -> None:
+        """Execute one inline or external module script through the page loader."""
+        if self._module_loader is None:
+            raise InterceptorError("Module loader is unavailable before a page navigation")
+
+        if entry["script_type"] == "inline":
+            self._module_loader.execute_inline(entry["content"], entry["node_id"])
+        else:
+            self._module_loader.execute_external(entry["src"])
+        self._flush_cookie_writes()
+        self._drain_runtime()
+
+    def _execute_script(self, entry, url):
+        self._context.eval(
+            f"globalThis.__phantom_current_script = globalThis.__phantom_elements[{json.dumps(entry['node_id'])}];"
+        )
+        try:
+            if entry["code_type"] == "module":
+                try:
+                    self._execute_module_script(entry)
+                except Exception as e:
+                    logger.warning("Module script execution failed on %s: %s", url, e)
+                    self.script_errors.append(e)
+
+            elif entry["script_type"] == "inline":
+                try:
+                    self._context.eval(entry["content"])
+                    self._drain_runtime()
+                except JSRuntimeError as e:
+                    logger.warning("Inline script execution failed on %s: %s", url, e)
+                    self.script_errors.append(e)
+
+            elif entry["script_type"] == "external":
+                script_url = urljoin(self.url or url, entry["src"])
+                try:
+                    script_options = build_request_options(
+                        method="GET",
+                        url=script_url,
+                        headers={"Referer": self.url or url},
+                    )
+                    script_response = self._session.request(script_options)
+                    self._context.eval(script_response.text)
+                    self._drain_runtime()
+                except Exception as e:
+                    logger.warning(
+                        "External script fetch/execution failed on %s (from %s): %s",
+                        script_url, url, e,
+                    )
+                    self.script_errors.append(e)
+        finally:
+            self._context.eval("globalThis.__phantom_current_script = null;")
 
     def goto(self, url: str) -> Response:
         """
@@ -166,46 +428,30 @@ class Page:
 
         self._reset_runtime()
         self._dom_builder.parse_html(response.text, url=self.url, referrer=self.referrer)
+        self._install_cookie_bridge()
+        self._install_fetch_bridge()
+        self._install_timer_bridge()
+        self._install_module_loader()
         self._generation += 1
 
         self.script_errors = []
 
-        for entry in self._dom_builder.get_scripts():
-            if entry["code_type"] == "module":
-                logger.info("Skipping unsupported module script on %s", self.url)
-                continue
-            if entry["code_type"] not in self._CLASSIC_SCRIPT_TYPES:
-                continue
+        while True:
+            new_scripts = [
+                script
+                for script in self._dom_builder.get_scripts()
+                if script["node_id"] not in self._executed_scripts_ids
+            ]
 
-            self._context.eval(
-                f"globalThis.__phantom_current_script = globalThis.__phantom_elements[{json.dumps(entry['node_id'])}];"
-            )
-            try:
-                if entry["script_type"] == "inline":
-                    try:
-                        self._context.eval(entry["content"])
-                    except JSRuntimeError as e:
-                        logger.warning("Inline script execution failed on %s: %s", url, e)
-                        self.script_errors.append(e)
+            if not new_scripts:
+                break
 
-                elif entry["script_type"] == "external":
-                    script_url = urljoin(self.url or url, entry["src"])
-                    try:
-                        script_options = build_request_options(
-                            method="GET",
-                            url=script_url,
-                            headers={"Referer": self.url or url},
-                        )
-                        script_response = self._session.request(script_options)
-                        self._context.eval(script_response.text)
-                    except Exception as e:
-                        logger.warning(
-                            "External script fetch/execution failed on %s (from %s): %s",
-                            script_url, url, e,
-                        )
-                        self.script_errors.append(e)
-            finally:
-                self._context.eval("globalThis.__phantom_current_script = null;")
+            for script in new_scripts:
+                self._executed_scripts_ids.add(script["node_id"])
+                if script["code_type"] != "module" and script["code_type"] not in self._CLASSIC_SCRIPT_TYPES:
+                    continue
+
+                self._execute_script(script, url)
 
         self.response = response
         return response
@@ -260,7 +506,15 @@ class Page:
 
     def evaluate(self, js_code: str) -> Any:
         """Evaluate JavaScript in the current page context."""
-        return self._context.eval(js_code)
+        result = self._context.eval(js_code)
+        self._drain_runtime()
+        return result
+
+    def run_event_loop(self, timeout: float = 0.0) -> None:
+        """Run timers and pending browser tasks for at most ``timeout`` seconds."""
+        if timeout < 0:
+            raise ValueError("timeout must be non-negative")
+        self._drain_runtime(timeout)
 
     def eval(self, js_code: str) -> Any:
         """Alias for :meth:`evaluate`, retained for a concise interactive API."""

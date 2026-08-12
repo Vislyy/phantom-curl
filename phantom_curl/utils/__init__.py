@@ -1,6 +1,7 @@
 from collections.abc import MutableMapping
 from typing import Iterator
 
+from phantom_curl.utils.storagestate_validation import is_valid_origin
 
 class CaseInsensitiveDict(MutableMapping):
     """
@@ -31,3 +32,8 @@ class CaseInsensitiveDict(MutableMapping):
 
     def __len__(self) -> int:
         return len(self._store)
+
+__all__ = [
+    "CaseInsensitiveDict",
+    "is_valid_origin"
+]

@@ -17,18 +17,20 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run cl
 ## ✨ Key Features
 
 - 🚀 **TLS impersonation:** `curl_cffi` browser profiles such as Chrome and Safari.
-- 🧠 **Embedded JavaScript:** QuickJS runs supported classic JavaScript directly in the Python process.
+- 🧠 **Embedded JavaScript:** QuickJS runs classic scripts and a limited static ES-module subset directly in the Python process.
 - 🏗️ **DOM interaction:** Linkedom supports selectors, attributes, clicks, text input, and DOM changes.
-- 🍪 **Shared session cookies:** requests and pages use the same cookie jar.
+- 🍪 **Shared session cookies:** requests, pages, `document.cookie`, and page `fetch()` use the same cookie jar.
+- 🌐 **Page fetch:** same-origin Promise-based `fetch()` supports common HTTP methods, string bodies, and JSON/text responses.
 - 🔁 **Retry policy:** retry transient network failures and selected HTTP status codes with exponential backoff.
 - 💾 **Portable cookie state:** export a session to JSON and restore it in another client.
 - 🔒 **Execution limits:** each page JavaScript context has time and memory limits.
 
 ## Current limitations
 
-- This is not a browser replacement. `fetch`, `XMLHttpRequest`, `localStorage`, `sessionStorage`, browser fingerprint spoofing, and CAPTCHA solving are not implemented yet.
-- ES modules (`<script type="module">`) are skipped. The embedded QuickJS API currently evaluates classic scripts and has no module resolver.
-- Page scripts run in a lightweight DOM environment; browser-specific APIs may be unavailable.
+- This is not a browser replacement. `XMLHttpRequest`, the JavaScript `localStorage`/`sessionStorage` APIs, CORS, streaming fetch bodies, browser fingerprint spoofing, and CAPTCHA solving are not implemented. Storage snapshots can already import and export origin-scoped local-storage data.
+- `fetch()` is same-origin only; it has no redirect handling, `FormData`, `AbortController`, or browser `Headers`/`Request` objects.
+- ES modules support static same-origin imports and a limited `import`/`export` syntax. Dynamic imports, re-exports, top-level `await`, and live bindings are unsupported.
+- Page scripts run in a lightweight DOM environment; timers run only while `Page` drains its event loop, automatically for microtasks and zero-delay timeouts or manually through `page.run_event_loop()`.
 
 ## ⚡ Quick Start
 
@@ -63,7 +65,7 @@ pip install phantom-curl
 PhantomCurl currently consists of three implemented layers:
 1. **Network Layer:** A wrapper over `curl_cffi` to execute requests with the required TLS fingerprint.
 2. **Environment Layer:** QuickJS + Linkedom sandbox that creates an isolated virtual DOM for each page navigation.
-3. **Page Layer:** Fetches HTML and classic external or inline scripts through the shared network session, then exposes DOM elements to Python.
+3. **Page Layer:** Fetches HTML, scripts, modules, and same-origin page fetches through the shared network session, then exposes DOM elements to Python.
 
 Read more in the [architecture documentation](docs/architecture.md).
 

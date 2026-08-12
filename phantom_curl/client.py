@@ -464,9 +464,9 @@ class PhantomClient:
         return page
 
     def export_storage_state(self) -> StorageState:
-        """Return a JSON-serializable snapshot of the current cookie session."""
+        """Return a JSON-serializable snapshot of cookies and local storage."""
         return self._session.export_storage_state()
 
     def import_storage_state(self, state: StorageState, *, clear_existing: bool = True) -> None:
-        """Restore cookies from a previously exported storage snapshot."""
+        """Restore cookies and local storage from a previously exported snapshot."""
         self._session.import_storage_state(state, clear_existing=clear_existing)

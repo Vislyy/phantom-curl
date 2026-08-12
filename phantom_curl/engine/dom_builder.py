@@ -30,7 +30,7 @@ class DOMBuilder:
     manipulated via JavaScript.
     """
 
-    def __init__(self, context: JSContext) -> None:
+    def __init__(self, context: JSContext, navigator_languages: tuple[str, ...] = ("en-US", "en")) -> None:
         """
         Creates a new DOMBuilder, immediately loading the required
         polyfills and the Linkedom bundle into a JSContext
@@ -49,6 +49,7 @@ class DOMBuilder:
 
         try:
             self._context.eval(polyfills)
+            self._configure_navigator(navigator_languages)
             self._context.eval(linkedom)
         except JSRuntimeError as e:
             raise EngineInitError(
@@ -57,6 +58,18 @@ class DOMBuilder:
                 f"polyfills (polyfills.js) are missing, corrupted, or "
                 f"incompatible with the current QuickJS runtime."
             ) from e
+
+    def _configure_navigator(self, languages: tuple[str, ...]) -> None:
+        """Apply configured language preferences to the JavaScript navigator."""
+        if not languages:
+            raise ValueError("navigator_languages must contain at least one language code")
+
+        self._context.eval(
+            "globalThis.navigator.language = "
+            f"{json.dumps(languages[0])};"
+            "globalThis.navigator.languages = "
+            f"{json.dumps(languages)};"
+        )
 
     def _format_host_for_location(self, parsed_url: SplitResult) -> str:
         """Return browser-style ``location.host`` without credentials.
@@ -203,6 +216,8 @@ class DOMBuilder:
         """
         js = """
         (function () {
+            if (!globalThis.__phantom_scripts_ws) globalThis.__phantom_scripts_ws = new WeakSet()
+            if (!globalThis.__phantom_scripts_wm) globalThis.__phantom_scripts_wm = new WeakMap()
             if (!globalThis.__phantom_elements) globalThis.__phantom_elements = {};
             if (!globalThis.__phantom_id_counter) globalThis.__phantom_id_counter = 0;
 
@@ -217,7 +232,16 @@ class DOMBuilder:
                     entry = { script_type: 'inline', code_type: codeType, content: s.textContent };
                 }
                 if (!entry) continue;
-                const id = 'script_' + (++globalThis.__phantom_id_counter);
+
+                let id;
+
+                if (globalThis.__phantom_scripts_wm.has(s)) {
+                    id = globalThis.__phantom_scripts_wm.get(s);
+                } else {
+                    id = 'script_' + ++globalThis.__phantom_id_counter;
+                    globalThis.__phantom_scripts_wm.set(s, id);
+                }
+
                 globalThis.__phantom_elements[id] = s;
                 entry.node_id = id;
                 out.push(entry);

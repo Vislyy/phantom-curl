@@ -70,7 +70,7 @@ class JSContext:
             ) from e
         
         return result
-    
+
     def add_callable(self, func_name: str, function: Callable[..., Any]) -> None:
         """
         Registers a Python callable into the QuickJS environment's global
@@ -107,5 +107,16 @@ class JSContext:
             raise EngineInitError(
                 f"Failed to register callable {func_name!r} in the JS context: {e}"
             ) from e
-        
-    
+
+    def execute_pending_jobs(self) -> int:
+        """Run queued Promise jobs and return the number that were executed."""
+        executed_jobs = 0
+        try:
+            while self._context.execute_pending_job():
+                executed_jobs += 1
+        except quickjs.JSException as e:
+            full_message = str(e)
+            first_line = full_message.split("\n")[0]
+            raise JSRuntimeError(first_line, js_stack=full_message) from e
+
+        return executed_jobs

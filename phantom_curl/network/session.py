@@ -10,6 +10,7 @@ real HTTP calls with TLS/JA3 fingerprint impersonation.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from http.cookies import SimpleCookie
 from http.cookiejar import Cookie as HTTPCookie
 import time
 from curl_cffi.requests import Session as CurlSession
@@ -19,9 +20,10 @@ from curl_cffi.requests.exceptions import (
 )
 
 from typing import Any, Optional, cast
+from urllib.parse import urlsplit
 
 from phantom_curl.exceptions import ConnectionRejectedError, RequestTimeoutError
-from phantom_curl.models import Cookie, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
+from phantom_curl.models import Cookie, OriginStorage, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
 from phantom_curl.network.session_cookies import SessionCookies
 from phantom_curl.utils.cookie import cookiejar_to_tuple
 
@@ -89,6 +91,8 @@ class NetworkSession:
         """
         self._stealth_config = stealth_config
         self.retry_config = retry_config or RetryConfig()
+        self._http_only_cookie_keys: set[tuple[str, str, str]] = set()
+        self._local_storage: dict[str, dict[str, str]] = {}
 
         # curl_cffi exposes narrow Literal-based types while PhantomCurl accepts
         # user-configured browser profiles and proxy mappings at its public API.
@@ -96,6 +100,11 @@ class NetworkSession:
             impersonate=cast(Any, stealth_config.impersonate),
             headers=dict(stealth_config.extra_headers),
         )
+
+    @property
+    def stealth_config(self) -> StealthConfig:
+        """Return the immutable stealth settings used by this session."""
+        return self._stealth_config
 
     def close(self) -> None:
         """
@@ -135,6 +144,26 @@ class NetworkSession:
 
         return response
 
+    def _update_http_only_cookie_metadata(self, raw_response) -> None:
+        """Preserve HttpOnly flags that curl_cffi drops on later requests."""
+        raw_responses = [*raw_response.history, raw_response]
+        for response in raw_responses:
+            hostname = urlsplit(response.url).hostname
+            if hostname is None:
+                continue
+
+            for header in response.headers.get_list("set-cookie"):
+                cookies = SimpleCookie()
+                cookies.load(header)
+                for morsel in cookies.values():
+                    domain = (morsel["domain"] or hostname).lstrip(".").lower()
+                    path = morsel["path"] or "/"
+                    key = (morsel.key, domain, path)
+                    if morsel["httponly"]:
+                        self._http_only_cookie_keys.add(key)
+                    else:
+                        self._http_only_cookie_keys.discard(key)
+
     def _extract_cookies(self, raw_response) -> tuple[Cookie, ...]:
         """
         Converts curl_cffi's internal cookie jar into a tuple of
@@ -146,7 +175,7 @@ class NetworkSession:
         Returns:
             A tuple of Cookie objects extracted from the response.
         """
-        return cookiejar_to_tuple(raw_response.cookies.jar)
+        return cookiejar_to_tuple(raw_response.cookies.jar, self._http_only_cookie_keys)
 
     def _resolve_proxies(self, options: RequestOptions) -> Optional[dict[str, str]]:
         """
@@ -215,6 +244,7 @@ class NetworkSession:
                     url=options.url,
                 ) from error
 
+            self._update_http_only_cookie_metadata(raw_response)
             response = self._build_response(raw_response)
             should_retry = retry_config.should_retry_status(options.method, response.status_code)
             if should_retry and attempt < retry_config.max_attempts:
@@ -241,15 +271,43 @@ class NetworkSession:
             >>> session.cookies["session_id"]
             'abc123'
         """
-        return SessionCookies(self._session)
+        return SessionCookies(self._session, self._http_only_cookie_keys)
 
     def export_storage_state(self) -> StorageState:
-        """Return a serializable snapshot of all cookies in this session."""
-        return StorageState(cookies=self.cookies.as_tuple())
+        """Return a serializable snapshot of session cookies and local storage."""
+        origins: list[OriginStorage] = []
+
+        for origin in self._local_storage.keys():
+            local_storage_fmt: list[tuple[str, str]] = []
+
+            for name, value in self._local_storage[origin].items():
+                local_storage_fmt.append(
+                    (name, value)
+                )
+
+            origins.append(
+                OriginStorage(
+                    origin,
+                    tuple(local_storage_fmt)
+                )
+            )
+
+        return StorageState(cookies=self.cookies.as_tuple(), origins=tuple(origins))
 
     def import_storage_state(self, state: StorageState, *, clear_existing: bool = True) -> None:
-        """Restore cookies from a previously exported :class:`StorageState`."""
+        """Restore cookies and origin-scoped local storage from a storage snapshot."""
         if clear_existing:
             self._session.cookies.clear()
+            self._http_only_cookie_keys.clear()
+            self._local_storage.clear()
+
         for cookie in state.cookies:
             self._session.cookies.jar.set_cookie(_to_http_cookie(cookie))
+            if cookie.http_only:
+                domain = (cookie.domain or "").lstrip(".").lower()
+                self._http_only_cookie_keys.add((cookie.name, domain, cookie.path))
+
+        for origin in state.origins:
+           self._local_storage.setdefault(origin.origin, {}).update(
+               {name: value for name, value in origin.local_storage}
+           )

@@ -1,7 +1,7 @@
 import pytest
 
 from phantom_curl.exceptions import HTTPError
-from phantom_curl.models import ProxyConfig, RequestOptions, Response, RetryConfig, StorageState
+from phantom_curl.models import ProxyConfig, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
 
 
 def test_request_options_freezes_json_without_mutating_source() -> None:
@@ -164,6 +164,8 @@ def test_storage_state_round_trips_and_validates_its_shape() -> None:
     restored = StorageState.from_json(state.to_json())
 
     assert restored == state
+    assert state.origins == ()
+
     with pytest.raises(ValueError, match="cookies"):
         StorageState.from_dict({})
     with pytest.raises(ValueError, match="booleans"):
@@ -177,3 +179,270 @@ def test_retry_config_normalizes_methods_and_calculates_backoff() -> None:
     assert config.delay_for_retry(3) == pytest.approx(0.4)
     with pytest.raises(ValueError, match="max_attempts"):
         RetryConfig(max_attempts=0)
+
+
+def test_stealth_config_requires_at_least_one_language() -> None:
+    with pytest.raises(ValueError, match="languages"):
+        StealthConfig(languages=())
+
+def test_stealth_config_requires_valid_language_code() -> None:
+    with pytest.raises(ValueError, match="languages"):
+        StealthConfig(languages=["xx-GB"])
+
+def test_stealth_config_languages_immutable() -> None:
+    languages = ["uk-UA", "uk"]
+    config = StealthConfig(languages=languages)
+
+    languages.append("en-US")
+
+    assert config.languages == ("uk-UA", "uk")
+
+def test_storage_state_round_trips_local_storage_per_origin() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [
+                    {"name": "theme", "value": "dark"}
+                ],
+            },
+            {
+                "origin": "https://two.test",
+                "localStorage": [
+                    {"name": "language", "value": "uk-UA"}
+                ],
+            },
+        ],
+    }
+
+    state = StorageState.from_dict(raw_state)
+    restored = StorageState.from_json(state.to_json())
+
+    assert restored == state
+    assert restored.to_dict()["origins"] == raw_state["origins"]
+
+def test_storage_state_round_trips_local_storage_per_origin_with_empty_local_storage() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [],
+            },
+            {
+                "origin": "https://two.test",
+                "localStorage": [],
+            },
+        ],
+    }
+
+    state = StorageState.from_dict(raw_state)
+    restored = StorageState.from_json(state.to_json())
+
+    assert restored == state
+    assert restored.to_dict()["origins"] == raw_state["origins"]
+
+def test_storage_state_round_trips_per_origin_with_empty_origins() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [],
+    }
+
+    state = StorageState.from_dict(raw_state)
+    restored = StorageState.from_json(state.to_json())
+
+    assert restored == state
+    assert restored.to_dict()["origins"] == raw_state["origins"]
+
+def test_storage_state_rejects_not_string_local_storage_name() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [
+                    {"name": 42, "value": "qwerty"}
+                ]
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="localStorage"):
+        StorageState.from_dict(raw_state)
+
+def test_storage_state_rejects_not_string_local_storage_value() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [
+                    {"name": "seed", "value": 42}
+                ]
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="localStorage"):
+        StorageState.from_dict(raw_state)
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "not-a-url",
+        "https://one.test/path",
+        "https://one.test?tab=settings",
+        "https://one.test#profile",
+        "https://user:password@one.test",
+        "ftp://one.test",
+    ],
+)
+def test_storage_state_rejects_urls_that_are_not_origins(origin: str) -> None:
+    """Only scheme, host and an optional port belong to a web origin."""
+    state = {
+        "cookies": [],
+        "origins": [{"origin": origin, "localStorage": []}],
+    }
+
+    with pytest.raises(ValueError, match="origin"):
+        StorageState.from_dict(state)
+
+def test_storage_state_rejects_local_storage_that_are_not_list_with_records() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": {"theme": "dark"},
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="local storage"):
+        StorageState.from_dict(raw_state)
+
+def test_storage_state_rejects_origins_that_are_not_list() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": {}
+    }
+
+    with pytest.raises(ValueError, match="origins"):
+        StorageState.from_dict(raw_state)
+
+def test_storage_state_rejects_origins_where_one_record_is_not_object() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [
+                    {"name": "theme", "value": "light"}
+                ],
+            },
+            [
+                "https://two.test"
+            ],
+            {
+                "origin": "https://three.test",
+                "localStorage": [
+                    {"name": "language", "value": "en-UK"},
+                ]
+            },
+        ]
+    }
+
+    with pytest.raises(ValueError, match="object"):
+        StorageState.from_dict(raw_state)
+
+def test_storage_state_rejects_record_that_is_not_object() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [
+                    ["theme=dark"]
+                ]
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="localStorage"):
+        StorageState.from_dict(raw_state)
+
+def test_storage_state_local_storage_is_tuple() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [
+                    {"name": "theme", "value": "light"}
+                ],
+            },
+            {
+                "origin": "https://three.test",
+                "localStorage": [
+                    {"name": "language", "value": "en-UK"},
+                ]
+            },
+        ]
+    }
+
+    state = StorageState.from_dict(raw_state)
+
+    assert isinstance(state.origins[0].local_storage, tuple)
+
+def test_storage_state_accepts_an_origin_with_a_port() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "http://127.0.0.1:8080",
+                "localStorage": [],
+            }
+        ],
+    }
+
+    state = StorageState.from_dict(raw_state)
+
+    assert state.origins[0].origin == raw_state["origins"][0]["origin"]
+    assert state.origins[0].local_storage == ()
+
+def test_storage_state_rejects_duplicate_local_storage_names() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [
+                    {"name": "theme", "value": "dark"},
+                    {"name": "theme", "value": "light"},
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="duplicate"):
+        StorageState.from_dict(raw_state)
+
+
+def test_storage_state_rejects_duplicate_origins() -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [{"name": "theme", "value": "dark"}],
+            },
+            {
+                "origin": "https://one.test",
+                "localStorage": [{"name": "language", "value": "uk"}],
+            },
+        ],
+    }
+
+    with pytest.raises(ValueError, match="duplicate"):
+        StorageState.from_dict(raw_state)

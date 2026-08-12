@@ -44,4 +44,5 @@ htmlcov/
 .mypy_cache/
 
 test.py
-test_domino.py
+
+docs/environment-bridge-walkthrough.md

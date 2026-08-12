@@ -21,10 +21,11 @@ Done means:
   backoff when it is valid;
 - local tests cover every rule without contacting the internet.
 
-## 2. Session state beyond cookies
+## 2. Session state beyond cookies (implemented, without the JavaScript bridge)
 
-`StorageState` currently saves cookies only. Add origin-scoped local storage as
-data first; do not connect it to JavaScript until the model and tests are solid.
+`StorageState` saves cookies and origin-scoped local-storage data. The next
+step is to expose that data to page JavaScript; do not add `sessionStorage` at
+the same time.
 
 Research topics: origin definition, JSON schema design, backward-compatible
 serialization, and validation of untrusted JSON.
@@ -36,25 +37,29 @@ Done means:
 - malformed JSON produces a useful `ValueError`, not a partial import;
 - a round-trip test proves no data is lost.
 
-## 3. A minimal `fetch` bridge
+## 3. A minimal `fetch` bridge (implemented)
 
-Start with only a same-origin `GET` implementation. Do not attempt full XHR,
-Promises, CORS, redirects, or request bodies in the first version.
+The current bridge is Promise-based and same-origin. It supports common HTTP
+methods, string bodies, JSON/text responses, cookies, and Referer. It
+deliberately does not implement CORS, redirects, streams, `FormData`,
+`AbortController`, `Headers`, or `Request`.
 
 Research topics: QuickJS Python `add_callable`, JSON serialization across a
 language boundary, URL joining, and QuickJS pending jobs/microtasks.
 
 Done means:
 
-- a page script can call `fetch('/api/value')` and read a text result;
+- a page script can call `fetch('/api/value')` and read a text or JSON result;
 - its request shares the page's cookies and sends a referer;
-- unsupported methods fail with a project exception explaining why;
+- cross-origin requests fail with an explanatory error;
 - a local HTTP-server test proves the behavior.
 
-## 4. ESM loading
+## 4. ESM loading (implemented subset)
 
-Do this only after the fetch bridge is stable. A module loader needs much more
-than accepting `export` syntax.
+The current loader resolves static same-origin imports, caches a module URL
+for one page navigation, and reports missing module URLs with their importer.
+It intentionally does not support dynamic imports, re-exports, top-level
+`await`, or live bindings.
 
 Research topics: QuickJS module evaluation API, static versus dynamic imports,
 module cache, relative URL resolution, import cycles, and source provenance.

@@ -158,3 +158,111 @@ def test_client_get_uses_a_per_request_max_attempts_override_with_no_retry_confi
     assert response.status_code == 200
     assert response.json() == {"attempt": 3}
     assert phantom_client.retry_config.max_attempts == 1
+
+def test_client_restores_local_storage_from_storage_state(phantom_client) -> None:
+    raw_state = {
+        "cookies": [],
+        "origins": [
+            {
+                "origin": "https://one.test",
+                "localStorage": [
+                    {"name": "language", "value": "en-UK"}
+                ]
+            }
+        ]
+    }
+
+    state = StorageState.from_dict(raw_state)
+
+    phantom_client.import_storage_state(state)
+    restored = phantom_client.export_storage_state()
+
+    assert state == restored
+
+
+def test_client_import_storage_state_merges_local_storage_when_not_clearing(phantom_client) -> None:
+    initial_state = StorageState.from_dict(
+        {
+            "cookies": [],
+            "origins": [
+                {
+                    "origin": "https://one.test",
+                    "localStorage": [
+                        {"name": "theme", "value": "dark"},
+                        {"name": "language", "value": "uk"},
+                    ],
+                },
+                {
+                    "origin": "https://two.test",
+                    "localStorage": [{"name": "layout", "value": "grid"}],
+                },
+            ],
+        }
+    )
+    update_state = StorageState.from_dict(
+        {
+            "cookies": [],
+            "origins": [
+                {
+                    "origin": "https://one.test",
+                    "localStorage": [{"name": "theme", "value": "light"}],
+                },
+            ],
+        }
+    )
+
+    phantom_client.import_storage_state(initial_state)
+    phantom_client.import_storage_state(update_state, clear_existing=False)
+
+    assert phantom_client.export_storage_state().to_dict()["origins"] == [
+        {
+            "origin": "https://one.test",
+            "localStorage": [
+                {"name": "theme", "value": "light"},
+                {"name": "language", "value": "uk"},
+            ],
+        },
+        {
+            "origin": "https://two.test",
+            "localStorage": [{"name": "layout", "value": "grid"}],
+        },
+    ]
+
+
+def test_client_import_storage_state_clears_existing_local_storage(phantom_client) -> None:
+    initial_state = StorageState.from_dict(
+        {
+            "cookies": [],
+            "origins": [
+                {
+                    "origin": "https://one.test",
+                    "localStorage": [{"name": "theme", "value": "dark"}],
+                },
+                {
+                    "origin": "https://two.test",
+                    "localStorage": [{"name": "layout", "value": "grid"}],
+                },
+            ],
+        }
+    )
+    replacement_state = StorageState.from_dict(
+        {
+            "cookies": [],
+            "origins": [
+                {
+                    "origin": "https://one.test",
+                    "localStorage": [{"name": "theme", "value": "light"}],
+                },
+            ],
+        }
+    )
+
+    phantom_client.import_storage_state(initial_state)
+    phantom_client.import_storage_state(replacement_state)
+
+    assert phantom_client.export_storage_state().to_dict()["origins"] == [
+        {
+            "origin": "https://one.test",
+            "localStorage": [{"name": "theme", "value": "light"}],
+        }
+    ]
