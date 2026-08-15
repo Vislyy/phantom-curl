@@ -2,13 +2,14 @@
 
 This document deliberately gives you goals and acceptance criteria instead of
 ready-made implementations. Work on one task at a time, write tests first, and
-ask for a review when your solution is ready.
+ask for a review when your solution is ready. Completed milestones remain here
+as a record of the supported behavior, not as unfinished work.
 
-## 1. Per-request retry overrides
+## 1. Per-request retry overrides (implemented)
 
-`RetryConfig` currently applies to the whole `PhantomClient`. Extend the public
-request API so one request can override that policy without mutating the
-client's default configuration.
+`RetryConfig` applies to the whole `PhantomClient`, while one request can
+replace it with `retry_config` or adjust only `max_attempts`. Neither override
+mutates the client's default policy.
 
 Research topics: immutable dataclasses, `dataclasses.replace`, HTTP method
 idempotency, and the `Retry-After` response header.
@@ -21,21 +22,24 @@ Done means:
   backoff when it is valid;
 - local tests cover every rule without contacting the internet.
 
-## 2. Session state beyond cookies (implemented, without the JavaScript bridge)
+## 2. Session state beyond cookies (implemented)
 
-`StorageState` saves cookies and origin-scoped local-storage data. The next
-step is to expose that data to page JavaScript; do not add `sessionStorage` at
-the same time.
+`StorageState` saves cookies and origin-scoped local-storage data.
+`localStorage` is exposed to page JavaScript with `getItem()`, `setItem()`,
+`removeItem()`, `clear()`, `key()`, and `length`. Writes persist through the
+shared session and are visible to new pages of the same origin. Do not add
+`sessionStorage` at the same time.
 
 Research topics: origin definition, JSON schema design, backward-compatible
 serialization, and validation of untrusted JSON.
 
 Done means:
 
-- the old cookie-only JSON remains valid;
+- old cookie-only JSON remains valid;
 - storage for `https://example.test` never appears for `https://other.test`;
 - malformed JSON produces a useful `ValueError`, not a partial import;
-- a round-trip test proves no data is lost.
+- a round-trip test proves no data is lost;
+- a write in one page is visible to a newly created page of the same origin.
 
 ## 3. A minimal `fetch` bridge (implemented)
 
@@ -71,7 +75,7 @@ Done means:
 - a missing module reports its URL and importer;
 - tests cover a relative import and a cyclic import.
 
-## 5. Async client
+## 5. Async client (future)
 
 Only introduce it once the synchronous API is well tested. Keep the sync and
 async public interfaces aligned rather than allowing them to drift apart.

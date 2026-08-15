@@ -1,18 +1,14 @@
 # 🕵️‍♂️ PhantomCurl
 
-[![CI Status](https://img.shields.io/github/actions/workflow/status/Vislyy/phantom-curl/ci.yml?branch=main)](https://github.com/Vislyy/phantom-curl/actions)
-[![PyPI version](https://img.shields.io/pypi/v/phantom-curl.svg)](https://pypi.org/project/phantom-curl/)
-[![Python Versions](https://img.shields.io/pypi/pyversions/phantom-curl.svg)](https://pypi.org/project/phantom-curl/)
-
 **PhantomCurl** is a Python library for HTTP requests with TLS impersonation and a lightweight HTML/JavaScript environment powered by `curl_cffi`, QuickJS, and Linkedom.
 
-No Selenium, Playwright, or external browser driver. It can parse a page, run classic scripts, and inspect or modify its DOM from Python.
+No Selenium, Playwright, or external browser driver. It can parse a page, run supported classic scripts and static ES modules, and inspect or modify its DOM from Python. It deliberately implements a documented browser-like subset rather than claiming to replace a full browser.
 
 ## 🎯 Why PhantomCurl?
 
 - **The `requests`/`httpx` problem:** They can't execute JS. Many sites render content via React/Vue.
 - **The Selenium/Playwright problem:** They are heavy, require installing browsers, eat RAM, and are easily detected.
-- **The PhantomCurl solution:** A lightweight context (QuickJS) that parses HTML into a DOM tree, executes supported classic scripts, and combines it with the browser-like TLS profiles provided by `curl_cffi`.
+- **The PhantomCurl solution:** A lightweight context (QuickJS) that parses HTML into a DOM tree, executes a supported JavaScript subset, and combines it with the browser-like TLS profiles provided by `curl_cffi`.
 
 ## ✨ Key Features
 
@@ -21,13 +17,16 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run cl
 - 🏗️ **DOM interaction:** Linkedom supports selectors, attributes, clicks, text input, and DOM changes.
 - 🍪 **Shared session cookies:** requests, pages, `document.cookie`, and page `fetch()` use the same cookie jar.
 - 🌐 **Page fetch:** same-origin Promise-based `fetch()` supports common HTTP methods, string bodies, and JSON/text responses.
+- 💾 **Origin-scoped local storage:** `localStorage` persists across new pages for the same origin and is included in `StorageState` exports.
+- ⏱️ **Page tasks:** Promise jobs and timers are drained by the page runtime; `document.write()` and dynamically inserted classic scripts are supported.
 - 🔁 **Retry policy:** retry transient network failures and selected HTTP status codes with exponential backoff.
-- 💾 **Portable cookie state:** export a session to JSON and restore it in another client.
+- 📦 **Portable session state:** export cookies and origin-scoped local storage to JSON and restore them in another client.
 - 🔒 **Execution limits:** each page JavaScript context has time and memory limits.
 
 ## Current limitations
 
-- This is not a browser replacement. `XMLHttpRequest`, the JavaScript `localStorage`/`sessionStorage` APIs, CORS, streaming fetch bodies, browser fingerprint spoofing, and CAPTCHA solving are not implemented. Storage snapshots can already import and export origin-scoped local-storage data.
+- This is not a browser replacement. `XMLHttpRequest`, `sessionStorage`, CORS, streaming fetch bodies, complete browser-fingerprint spoofing, and CAPTCHA solving are not implemented.
+- `localStorage` supports `getItem()`, `setItem()`, `removeItem()`, `clear()`, `key()`, and `length`. It does not support named-property access such as `localStorage.theme`, `StorageEvent`, or synchronizing writes into pages that were already created.
 - `fetch()` is same-origin only; it has no redirect handling, `FormData`, `AbortController`, or browser `Headers`/`Request` objects.
 - ES modules support static same-origin imports and a limited `import`/`export` syntax. Dynamic imports, re-exports, top-level `await`, and live bindings are unsupported.
 - Page scripts run in a lightweight DOM environment; timers run only while `Page` drains its event loop, automatically for microtasks and zero-delay timeouts or manually through `page.run_event_loop()`.
@@ -50,14 +49,19 @@ with PhantomClient(
     heading = page.query_selector("h1")
     print(heading.text if heading else "No heading")
 
-    # Persist cookies; writing the returned JSON is your application's job.
+    # localStorage changes share the same origin-scoped session state.
+    page.eval("localStorage.setItem('visited', 'yes')")
+
+    # Persist cookies and localStorage; writing the JSON is the application's job.
     state_json = client.export_storage_state().to_json()
 ```
 
 ## 📦 Installation
 
+PhantomCurl has not been published to PyPI yet. Install the current version from the repository:
+
 ```bash
-pip install phantom-curl
+pip install "git+https://github.com/Vislyy/phantom-curl.git"
 ```
 
 ## 🏗️ Architecture
