@@ -413,3 +413,20 @@ def test_page_local_storage_is_shared_by_pages_on_same_origin(phantom_client, ht
     second_page = phantom_client.new_page(f"{http_server}/cookies")
 
     assert second_page.eval("localStorage.getItem('theme');") == "dark"
+
+def test_page_session_storage_is_isolated_between_pages(phantom_client, http_server: str) -> None:
+    first_page = phantom_client.new_page(f"{http_server}/page/")
+    first_page.eval("sessionStorage.setItem('draft', 'hello')")
+
+    second_page = phantom_client.new_page(f"{http_server}/page/")
+
+    assert first_page.eval("sessionStorage.getItem('draft')") == 'hello'
+    assert second_page.eval("sessionStorage.getItem('draft')") is None
+
+def test_page_session_storage_survives_same_page_navigation(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}")
+    page.eval("sessionStorage.setItem('draft', 'hello');")
+
+    page.goto(f"{http_server}/cookies")
+
+    assert page.eval("sessionStorage.getItem('draft', 'hello');") == "hello"
