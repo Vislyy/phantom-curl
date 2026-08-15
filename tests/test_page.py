@@ -405,3 +405,11 @@ def test_page_local_storage_clear_updates_storage_state(
             "localStorage": [],
         }
     ]
+
+def test_page_local_storage_is_shared_by_pages_on_same_origin(phantom_client, http_server: str) -> None:
+    first_page = phantom_client.new_page(f"{http_server}/page/")
+    first_page.eval("localStorage.setItem('theme', 'dark');")
+
+    second_page = phantom_client.new_page(f"{http_server}/cookies")
+
+    assert second_page.eval("localStorage.getItem('theme');") == "dark"
