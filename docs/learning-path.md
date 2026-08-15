@@ -27,8 +27,11 @@ Done means:
 `StorageState` saves cookies and origin-scoped local-storage data.
 `localStorage` is exposed to page JavaScript with `getItem()`, `setItem()`,
 `removeItem()`, `clear()`, `key()`, and `length`. Writes persist through the
-shared session and are visible to new pages of the same origin. Do not add
-`sessionStorage` at the same time.
+shared session and are visible to new pages of the same origin.
+
+`sessionStorage` implements the same API, but lives in a single `Page`. It
+survives navigation in that page, remains isolated from other pages, and is
+not serialized into `StorageState`.
 
 Research topics: origin definition, JSON schema design, backward-compatible
 serialization, and validation of untrusted JSON.
@@ -40,6 +43,8 @@ Done means:
 - malformed JSON produces a useful `ValueError`, not a partial import;
 - a round-trip test proves no data is lost;
 - a write in one page is visible to a newly created page of the same origin.
+- a `sessionStorage` write survives navigation in one page but is absent in a
+  newly created page.
 
 ## 3. A minimal `fetch` bridge (implemented)
 
