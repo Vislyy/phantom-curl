@@ -42,6 +42,25 @@ def test_element_click_and_custom_event_reach_dom_listeners(phantom_client, http
     assert page.body.get_attribute("custom-event") == "yes"
 
 
+def test_element_click_runs_handlers_and_queues_async_work(phantom_client, http_server: str) -> None:
+    """A click handler runs synchronously; its fetch and timer need a page drain."""
+    page = phantom_client.new_page(f"{http_server}/interaction-queue/")
+    button = page.query_selector("#queue-work")
+
+    assert button is not None
+    button.click()
+
+    assert page.body is not None
+    assert page.body.get_attribute("click-handler-ran") == "yes"
+    assert page.body.get_attribute("fetch-value") is None
+    assert page.body.get_attribute("timer-ran") is None
+
+    page.run_event_loop()
+
+    assert page.body.get_attribute("fetch-value") == "from-api"
+    assert page.body.get_attribute("timer-ran") == "yes"
+
+
 def test_query_selector_all_returns_elements_in_document_order(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/elements/")
 

@@ -429,4 +429,23 @@ def test_page_session_storage_survives_same_page_navigation(phantom_client, http
 
     page.goto(f"{http_server}/cookies")
 
-    assert page.eval("sessionStorage.getItem('draft', 'hello');") == "hello"
+    assert page.eval("sessionStorage.getItem('draft');") == "hello"
+
+
+def test_page_session_storage_supports_storage_api(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+    page.eval("sessionStorage.setItem('first', '1'); sessionStorage.setItem('second', '2');")
+
+    assert page.eval("sessionStorage.length") == 2
+    assert page.eval("sessionStorage.key(0)") == "first"
+    assert page.eval("sessionStorage.key(1)") == "second"
+    assert page.eval("sessionStorage.key(2)") is None
+
+    page.eval("sessionStorage.removeItem('first');")
+
+    assert page.eval("sessionStorage.getItem('first')") is None
+    assert page.eval("sessionStorage.length") == 1
+
+    page.eval("sessionStorage.clear();")
+
+    assert page.eval("sessionStorage.length") == 0

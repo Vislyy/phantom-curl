@@ -324,6 +324,27 @@ class _TestHandler(BaseHTTPRequestHandler):
             self._send(200, body, "text/html")
             return
 
+        if parsed.path == "/interaction-queue/":
+            body = b"""
+                <html>
+                    <body>
+                        <button id="queue-work">Queue work</button>
+                        <script>
+                            const button = document.getElementById('queue-work');
+                            button.addEventListener('click', () => {
+                                document.body.setAttribute('click-handler-ran', 'yes');
+                                fetch('/api/value')
+                                    .then(response => response.json())
+                                    .then(data => document.body.setAttribute('fetch-value', data.value));
+                                setTimeout(() => document.body.setAttribute('timer-ran', 'yes'), 0);
+                            });
+                        </script>
+                    </body>
+                </html>
+            """
+            self._send(200, body, "text/html")
+            return
+
         self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
