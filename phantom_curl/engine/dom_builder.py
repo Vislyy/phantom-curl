@@ -59,6 +59,8 @@ class DOMBuilder:
                 f"incompatible with the current QuickJS runtime."
             ) from e
 
+        self.origin = ""
+
     def _configure_navigator(self, languages: tuple[str, ...]) -> None:
         """Apply configured language preferences to the JavaScript navigator."""
         if not languages:
@@ -125,6 +127,8 @@ class DOMBuilder:
             if parsed_url.scheme in {"http", "https"} and host
             else "null"
         )
+
+        self.origin = origin
 
         code = f"""
         const parsed = parseHTML({safe_html_literal});

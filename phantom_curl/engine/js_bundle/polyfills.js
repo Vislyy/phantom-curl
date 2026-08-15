@@ -224,3 +224,72 @@ if (typeof globalThis.console === "undefined") {
     debug: typeof print === "function" ? print : function () {},
   };
 }
+
+class PhantomLocalStorage {
+  constructor(entries, recordOperation) {
+    this._store = new Map(entries || []);
+    this._recordOperation = recordOperation;
+  }
+
+  get length() {
+    return this._store.size;
+  }
+
+  getItem(key) {
+    key = String(key);
+    return this._store.has(key) ? this._store.get(key) : null;
+  }
+
+  setItem(key, value) {
+    key = String(key);
+    value = String(value);
+    this._store.set(key, value);
+    this._recordOperation({ type: "set", key, value });
+  }
+
+  removeItem(key) {
+    key = String(key);
+    if (!this._store.has(key)) {
+      return;
+    }
+
+    this._store.delete(key);
+    this._recordOperation({ type: "remove", key });
+  }
+
+  clear() {
+    if (this._store.size === 0) {
+      return;
+    }
+
+    this._store.clear();
+    this._recordOperation({ type: "clear" });
+  }
+
+  key(index) {
+    const position = Number(index);
+    if (!Number.isInteger(position) || position < 0) {
+      return null;
+    }
+
+    const keys = Array.from(this._store.keys());
+    return position < keys.length ? keys[position] : null;
+  }
+}
+
+globalThis.__phantom_install_local_storage = function(entries) {
+  globalThis.__phantom_pending_local_storage_operations = [];
+  const recordOperation = function(operation) {
+    globalThis.__phantom_pending_local_storage_operations.push(operation);
+  };
+  const localStorage = new PhantomLocalStorage(entries, recordOperation);
+
+  globalThis.localStorage = localStorage;
+  globalThis.window.localStorage = localStorage;
+};
+
+globalThis.__phantom_take_local_storage_operations = function() {
+  const operations = globalThis.__phantom_pending_local_storage_operations;
+  globalThis.__phantom_pending_local_storage_operations = [];
+  return JSON.stringify(operations);
+};

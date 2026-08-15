@@ -1,6 +1,7 @@
 import json
 
 from phantom_curl import PhantomClient, StealthConfig
+from phantom_curl.models import StorageState
 from phantom_curl.exceptions import JSRuntimeError
 
 
@@ -304,3 +305,103 @@ def test_page_records_errors_from_dynamically_inserted_scripts(
     assert len(page.script_errors) == 1
     assert isinstance(page.script_errors[0], JSRuntimeError)
     assert "dynamic script failure" in str(page.script_errors[0])
+
+def test_page_local_storage_reads_imported_state(
+    phantom_client, http_server: str
+) -> None:
+    state = StorageState.from_dict(
+        {
+            "cookies": [],
+            "origins": [
+                {
+                    "origin": http_server,
+                    "localStorage": [
+                        {"name": "theme", "value": "dark"},
+                    ],
+                }
+            ],
+        }
+    )
+    phantom_client.import_storage_state(state)
+
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    assert page.eval("localStorage.getItem('theme')") == "dark"
+
+
+def test_page_local_storage_persists_writes_to_storage_state(
+    phantom_client, http_server: str
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval("localStorage.setItem('theme', 'dark');")
+
+    assert phantom_client.export_storage_state().to_dict()["origins"] == [
+        {
+            "origin": http_server,
+            "localStorage": [{"name": "theme", "value": "dark"}],
+        }
+    ]
+
+
+def test_page_local_storage_preserves_empty_keys_and_values(
+    phantom_client, http_server: str
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval("localStorage.setItem('', '');")
+
+    assert page.eval("localStorage.getItem('')") == ""
+    assert phantom_client.export_storage_state().to_dict()["origins"] == [
+        {
+            "origin": http_server,
+            "localStorage": [{"name": "", "value": ""}],
+        }
+    ]
+
+
+def test_page_local_storage_exposes_length_and_key(
+    phantom_client, http_server: str
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval("localStorage.setItem('first', '1'); localStorage.setItem('second', '2');")
+
+    assert page.eval("localStorage.length") == 2
+    assert page.eval("localStorage.key(0)") == "first"
+    assert page.eval("localStorage.key(1)") == "second"
+    assert page.eval("localStorage.key(2)") is None
+
+
+def test_page_local_storage_remove_item_updates_storage_state(
+    phantom_client, http_server: str
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+    page.eval("localStorage.setItem('keep', 'yes'); localStorage.setItem('remove', 'no');")
+
+    page.eval("localStorage.removeItem('remove');")
+
+    assert page.eval("localStorage.getItem('remove')") is None
+    assert phantom_client.export_storage_state().to_dict()["origins"] == [
+        {
+            "origin": http_server,
+            "localStorage": [{"name": "keep", "value": "yes"}],
+        }
+    ]
+
+
+def test_page_local_storage_clear_updates_storage_state(
+    phantom_client, http_server: str
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+    page.eval("localStorage.setItem('first', '1'); localStorage.setItem('second', '2');")
+
+    page.eval("localStorage.clear();")
+
+    assert page.eval("localStorage.length") == 0
+    assert phantom_client.export_storage_state().to_dict()["origins"] == [
+        {
+            "origin": http_server,
+            "localStorage": [],
+        }
+    ]

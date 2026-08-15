@@ -273,6 +273,22 @@ class NetworkSession:
         """
         return SessionCookies(self._session, self._http_only_cookie_keys)
 
+    def local_storage_for(self, origin: str) -> dict[str, str]:
+        """Return a copy of the local-storage entries stored for one origin."""
+        return dict(self._local_storage.get(origin, {}))
+
+    def set_local_storage_item(self, origin: str, key: str, value: str) -> None:
+        """Store one string local-storage entry for an origin."""
+        self._local_storage.setdefault(origin, {})[key] = value
+
+    def remove_local_storage_item(self, origin: str, key: str) -> None:
+        """Remove one local-storage entry from an origin, when it exists."""
+        self._local_storage.setdefault(origin, {}).pop(key, None)
+
+    def clear_local_storage(self, origin: str) -> None:
+        """Remove all local-storage entries stored for an origin."""
+        self._local_storage.setdefault(origin, {}).clear()
+
     def export_storage_state(self) -> StorageState:
         """Return a serializable snapshot of session cookies and local storage."""
         origins: list[OriginStorage] = []

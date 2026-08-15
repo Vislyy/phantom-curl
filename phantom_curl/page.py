@@ -274,6 +274,18 @@ class Page:
         )
         self._context.eval(f"globalThis.__phantom_replace_document_cookie({json.dumps(cookie_string)});")
 
+    def _install_local_storage_bridge(self) -> None:
+        """Install the page localStorage facade from the session's origin state."""
+        local_storage = self._session.local_storage_for(self._dom_builder.origin)
+        local_storage_entries = [
+            [name, value]
+            for name, value in local_storage.items()
+        ]
+
+        self._context.eval(
+            f"globalThis.__phantom_install_local_storage({json.dumps(local_storage_entries)});"
+        )
+
     def _install_timer_bridge(self) -> None:
         """Install the page-local timer APIs before page scripts run."""
         self._timer_bridge = TimerBridge(self._context)
@@ -316,11 +328,37 @@ class Page:
                     ");"
                 )
 
+    def _flush_local_storage_operations(self) -> None:
+        """Persist localStorage mutations queued by the current JS context."""
+        raw_operations = self._context.eval("__phantom_take_local_storage_operations()")
+        operations = json.loads(raw_operations)
+
+        for operation in operations:
+            if not isinstance(operation, dict):
+                raise InterceptorError("localStorage bridge received invalid operation data")
+
+            operation_type = operation.get("type")
+            key = operation.get("key")
+
+            if operation_type == "set" and isinstance(key, str):
+                value = operation.get("value")
+                if not isinstance(value, str):
+                    raise InterceptorError("localStorage set operation requires a string value")
+                self._session.set_local_storage_item(self._dom_builder.origin, key, value)
+            elif operation_type == "remove" and isinstance(key, str):
+                self._session.remove_local_storage_item(self._dom_builder.origin, key)
+            elif operation_type == "clear":
+                self._session.clear_local_storage(self._dom_builder.origin)
+            else:
+                raise InterceptorError("localStorage bridge received invalid operation data")
+
     def _drain_runtime(self, timeout: float = 0.0) -> None:
         """Run microtasks, queued fetches and timers due within ``timeout`` seconds."""
         deadline = time.monotonic() + timeout
         while True:
+            self._flush_local_storage_operations()
             self._flush_fetch_requests()
+            self._flush_local_storage_operations()
             if self._timer_bridge is None or not self._timer_bridge.run_due_timers():
                 if self._timer_bridge is None:
                     return
@@ -429,6 +467,7 @@ class Page:
         self._reset_runtime()
         self._dom_builder.parse_html(response.text, url=self.url, referrer=self.referrer)
         self._install_cookie_bridge()
+        self._install_local_storage_bridge()
         self._install_fetch_bridge()
         self._install_timer_bridge()
         self._install_module_loader()
