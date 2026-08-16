@@ -32,7 +32,7 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run su
 - `sessionStorage` has the same supported methods, but belongs to one `Page` and its origins. It survives `page.goto()` in that page, is isolated from other `Page` objects, and is not included in `StorageState`.
 - `fetch()` is same-origin only; it has no redirect handling, `FormData`, `AbortController`, or browser `Headers`/`Request` objects.
 - ES modules support static same-origin imports and a limited `import`/`export` syntax. Dynamic imports, re-exports, top-level `await`, and live bindings are unsupported.
-- Event listeners run synchronously when JavaScript or `Element` triggers an event. `Element.click()`, `type()`, and `dispatch_event()` do not yet drain queued `fetch()` calls or timers automatically, so use `page.run_event_loop()` after an interaction that starts asynchronous work. Linkedom does not perform browser default actions such as form submission or link navigation, and scripts inserted after an interaction are not loaded automatically.
+- Event listeners run synchronously when JavaScript or `Element` triggers an event. `Element.click()`, `type()`, and `dispatch_event()` automatically drain queued fetches, Promise jobs, and zero-delay timers. Call `page.run_event_loop(timeout)` for timers scheduled in the future. Linkedom does not perform browser default actions such as form submission or link navigation, and scripts inserted after an interaction are not loaded automatically.
 
 ## ⚡ Quick Start
 

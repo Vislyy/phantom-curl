@@ -42,8 +42,8 @@ def test_element_click_and_custom_event_reach_dom_listeners(phantom_client, http
     assert page.body.get_attribute("custom-event") == "yes"
 
 
-def test_element_click_runs_handlers_and_queues_async_work(phantom_client, http_server: str) -> None:
-    """A click handler runs synchronously; its fetch and timer need a page drain."""
+def test_element_click_runs_handlers_and_drains_immediate_async_work(phantom_client, http_server: str) -> None:
+    """A click drains the fetch and zero-delay timer queued by its handler."""
     page = phantom_client.new_page(f"{http_server}/interaction-queue/")
     button = page.query_selector("#queue-work")
 
@@ -52,13 +52,28 @@ def test_element_click_runs_handlers_and_queues_async_work(phantom_client, http_
 
     assert page.body is not None
     assert page.body.get_attribute("click-handler-ran") == "yes"
-    assert page.body.get_attribute("fetch-value") is None
-    assert page.body.get_attribute("timer-ran") is None
-
-    page.run_event_loop()
-
     assert page.body.get_attribute("fetch-value") == "from-api"
     assert page.body.get_attribute("timer-ran") == "yes"
+
+
+
+def test_element_type_and_custom_event_drain_immediate_async_work(phantom_client, http_server: str) -> None:
+    """Typing and dispatching an event also drain work queued by listeners."""
+    page = phantom_client.new_page(f"{http_server}/interaction-queue/")
+    input_element = page.query_selector("#queue-input")
+    button = page.query_selector("#queue-work")
+
+    assert input_element is not None
+    assert button is not None
+    assert page.body is not None
+
+    input_element.type("Ada")
+
+    assert page.body.get_attribute("input-fetch-value") == "from-api"
+
+    assert button.dispatch_event("queued-event") is True
+
+    assert page.body.get_attribute("custom-event-timer-ran") == "yes"
 
 
 def test_query_selector_all_returns_elements_in_document_order(phantom_client, http_server: str) -> None:

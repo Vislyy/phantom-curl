@@ -188,7 +188,8 @@ class Element:
     def click(self) -> None:
         """
         Simulates a mouse click on this element by executing its `click()`
-        method or dispatching a click MouseEvent.
+        method or dispatching a click MouseEvent, then drains immediate page
+        tasks queued by the event handler.
         """
         js = f"""
         (function() {{
@@ -208,12 +209,14 @@ class Element:
         }})()
         """
         self._context.eval(js)
+        self._page.run_event_loop()
 
     @_ensure_valid
     def type(self, text: str) -> None:
         """
         Simulates user typing `text` into an input/textarea element.
-        Dispatches standard input, change, and blur events compatible with LinkeDOM.
+        Dispatches standard input, change, and blur events compatible with
+        LinkeDOM, then drains immediate page tasks queued by listeners.
         """
         safe_text = json.dumps(text)
 
@@ -255,8 +258,8 @@ class Element:
             dispatchEventByName('blur');
         }})()
         """
-
         self._context.eval(js)
+        self._page.run_event_loop()
 
     @_ensure_valid
     def dispatch_event(
@@ -266,9 +269,14 @@ class Element:
         bubbles: bool = True,
         cancelable: bool = True,
     ) -> bool:
+        """Dispatch an event and drain immediate page tasks queued by listeners."""
         script = self._create_event_script(
             event_type,
             bubbles=bubbles,
             cancelable=cancelable
         )
-        return bool(self._context.eval(script))
+
+        script_result = bool(self._context.eval(script))
+        self._page.run_event_loop()
+
+        return script_result

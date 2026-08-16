@@ -328,15 +328,25 @@ class _TestHandler(BaseHTTPRequestHandler):
             body = b"""
                 <html>
                     <body>
+                        <input id="queue-input">
                         <button id="queue-work">Queue work</button>
                         <script>
+                            const input = document.getElementById('queue-input');
                             const button = document.getElementById('queue-work');
+                            input.addEventListener('input', () => {
+                                fetch('/api/value')
+                                    .then(response => response.json())
+                                    .then(data => document.body.setAttribute('input-fetch-value', data.value));
+                            });
                             button.addEventListener('click', () => {
                                 document.body.setAttribute('click-handler-ran', 'yes');
                                 fetch('/api/value')
                                     .then(response => response.json())
                                     .then(data => document.body.setAttribute('fetch-value', data.value));
                                 setTimeout(() => document.body.setAttribute('timer-ran', 'yes'), 0);
+                            });
+                            button.addEventListener('queued-event', () => {
+                                setTimeout(() => document.body.setAttribute('custom-event-timer-ran', 'yes'), 0);
                             });
                         </script>
                     </body>
