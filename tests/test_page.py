@@ -449,3 +449,9 @@ def test_page_session_storage_supports_storage_api(phantom_client, http_server: 
     page.eval("sessionStorage.clear();")
 
     assert page.eval("sessionStorage.length") == 0
+
+def test_page_self_aliases_window(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    assert page.eval("self === window") is True
+    assert page.eval("self.document === document") is True

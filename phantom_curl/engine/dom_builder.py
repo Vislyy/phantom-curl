@@ -134,6 +134,7 @@ class DOMBuilder:
         const parsed = parseHTML({safe_html_literal});
         globalThis.window = parsed.window;
         globalThis.document = parsed.document;
+        globalThis.self = globalThis.window;
         globalThis.__phantom_document = parsed.document;
 
         globalThis.document.referrer = {json.dumps(referrer or "")};
