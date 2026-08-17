@@ -55,8 +55,6 @@ def test_element_click_runs_handlers_and_drains_immediate_async_work(phantom_cli
     assert page.body.get_attribute("fetch-value") == "from-api"
     assert page.body.get_attribute("timer-ran") == "yes"
 
-
-
 def test_element_type_and_custom_event_drain_immediate_async_work(phantom_client, http_server: str) -> None:
     """Typing and dispatching an event also drain work queued by listeners."""
     page = phantom_client.new_page(f"{http_server}/interaction-queue/")

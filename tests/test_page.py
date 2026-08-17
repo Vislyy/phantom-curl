@@ -150,6 +150,42 @@ def test_page_url_search_params_read_and_update_query_strings(phantom_client, ht
     }
 
 
+def test_page_headers_normalize_and_iterate_values(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    result = json.loads(
+        page.eval(
+            """
+            const headers = new Headers({"X-Request-ID": "first", "Accept": "application/json"});
+            headers.append("x-request-id", "second");
+            headers.set("Content-Type", " text/plain ");
+
+            JSON.stringify({
+                isExposedOnWindow: window.Headers === Headers,
+                accept: headers.get("ACCEPT"),
+                requestId: headers.get("X-Request-ID"),
+                hasContentType: headers.has("content-type"),
+                missing: headers.get("missing"),
+                entries: Array.from(headers),
+            });
+            """
+        )
+    )
+
+    assert result == {
+        "isExposedOnWindow": True,
+        "accept": "application/json",
+        "requestId": "first, second",
+        "hasContentType": True,
+        "missing": None,
+        "entries": [
+            ["accept", "application/json"],
+            ["content-type", "text/plain"],
+            ["x-request-id", "first, second"],
+        ],
+    }
+
+
 def test_page_uses_default_navigator_languages(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/page/")
 
@@ -556,3 +592,30 @@ def test_page_button_click_starts_script_execute(phantom_client, http_server: st
 
     assert page.body is not None
     assert page.body.get_attribute("after-click-script-ran") == "yes"
+
+def test_page_fetch_accepts_headers_instance(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval(
+        """
+        const requestHeaders = new Headers({"X-Page": "from-headers"});
+
+        fetch("/api/echo", {
+            method: "POST",
+            headers: requestHeaders,
+            body: "payload",
+        })
+            .then(response => response.json())
+            .then(result => {
+                document.body.setAttribute(
+                    "headers-instance-result",
+                    JSON.stringify(result)
+                );
+            });
+        """
+    )
+
+    result = json.loads(page.eval("document.body.getAttribute('headers-instance-result')"))
+
+    assert result["header"] == "from-headers"
+    assert result["body"] == "payload"

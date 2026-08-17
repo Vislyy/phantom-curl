@@ -821,6 +821,133 @@ if (typeof globalThis.console === "undefined") {
   }
 })();
 
+/**
+ * Headers polyfill
+ * ================
+ *
+ * Implements the browser-facing container for HTTP header fields. The fetch
+ * bridge is intentionally wired separately: this class first gives page code
+ * the normal Web API surface, then a later bridge change can serialize it into
+ * Python request options.
+ */
+(function () {
+  function normalizeHeaderName(name) {
+    const normalized = String(name).toLowerCase();
+    if (!/^[!#$%&'*+\-.^_|~0-9a-z]+$/.test(normalized)) {
+      throw new TypeError("Invalid HTTP header name");
+    }
+    return normalized;
+  }
+
+  function normalizeHeaderValue(value) {
+    const normalized = String(value).trim();
+    if (/[\r\n]/.test(normalized)) {
+      throw new TypeError("Invalid HTTP header value");
+    }
+    return normalized;
+  }
+
+  class PhantomHeaders {
+    constructor(init) {
+      this._headers = new Map();
+
+      if (init === undefined || init === null) {
+        return;
+      }
+
+      if (init instanceof PhantomHeaders) {
+        for (const entry of init.entries()) {
+          this.set(entry[0], entry[1]);
+        }
+        return;
+      }
+
+      if (typeof init[Symbol.iterator] === "function") {
+        for (const pair of init) {
+          const values = Array.from(pair);
+          if (values.length !== 2) {
+            throw new TypeError("Headers initializer must contain name-value pairs");
+          }
+          this.append(values[0], values[1]);
+        }
+        return;
+      }
+
+      for (const name of Object.keys(init)) {
+        this.append(name, init[name]);
+      }
+    }
+
+    append(name, value) {
+      const normalizedName = normalizeHeaderName(name);
+      const normalizedValue = normalizeHeaderValue(value);
+      const existing = this._headers.get(normalizedName);
+      this._headers.set(normalizedName, existing ? existing + ", " + normalizedValue : normalizedValue);
+    }
+
+    delete(name) {
+      this._headers.delete(normalizeHeaderName(name));
+    }
+
+    get(name) {
+      const value = this._headers.get(normalizeHeaderName(name));
+      return value === undefined ? null : value;
+    }
+
+    has(name) {
+      return this._headers.has(normalizeHeaderName(name));
+    }
+
+    set(name, value) {
+      this._headers.set(normalizeHeaderName(name), normalizeHeaderValue(value));
+    }
+
+    _sortedEntries() {
+      return Array.from(this._headers.entries()).sort(function (left, right) {
+        if (left[0] < right[0]) return -1;
+        if (left[0] > right[0]) return 1;
+        return 0;
+      });
+    }
+
+    entries() {
+      return this._sortedEntries()[Symbol.iterator]();
+    }
+
+    keys() {
+      return this._sortedEntries()
+        .map(function (entry) {
+          return entry[0];
+        })[Symbol.iterator]();
+    }
+
+    values() {
+      return this._sortedEntries()
+        .map(function (entry) {
+          return entry[1];
+        })[Symbol.iterator]();
+    }
+
+    forEach(callback, thisArg) {
+      if (typeof callback !== "function") {
+        throw new TypeError("Headers.forEach requires a callback function");
+      }
+
+      for (const entry of this._sortedEntries()) {
+        callback.call(thisArg, entry[1], entry[0], this);
+      }
+    }
+
+    [Symbol.iterator]() {
+      return this.entries();
+    }
+  }
+
+  if (typeof globalThis.Headers === "undefined") {
+    globalThis.Headers = PhantomHeaders;
+  }
+})();
+
 class PhantomLocalStorage {
   constructor(entries, recordOperation) {
     this._store = new Map(entries || []);

@@ -49,9 +49,10 @@ Done means:
 ## 3. A minimal `fetch` bridge (implemented)
 
 The current bridge is Promise-based and same-origin. It supports common HTTP
-methods, string bodies, JSON/text responses, cookies, and Referer. It
-deliberately does not implement CORS, redirects, streams, `FormData`,
-`AbortController`, `Headers`, or `Request`.
+methods, string bodies, JSON/text responses, cookies, Referer, plain-object
+headers, and the implemented `Headers` subset. It deliberately does not
+implement CORS, redirects, streams, `FormData`, `AbortController`, `Request`,
+or response-header access.
 
 Research topics: QuickJS Python `add_callable`, JSON serialization across a
 language boundary, URL joining, and QuickJS pending jobs/microtasks.

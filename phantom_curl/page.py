@@ -191,6 +191,18 @@ class Page:
                 });
             };
 
+            function serializeFetchHeaders(headers) {
+                if (!(headers instanceof Headers)) {
+                    return headers;
+                }
+
+                const serialized = Object.create(null);
+                for (const [name, value] of headers) {
+                    serialized[name] = value;
+                }
+                return serialized;
+            }
+
             globalThis.fetch = function fetch(input, init) {
                 return new Promise(function (resolve, reject) {
                     if (typeof input !== 'string') {
@@ -206,7 +218,8 @@ class Page:
 
                     const id = ++globalThis.__phantom_fetch_id;
                     const method = options.method === undefined ? 'GET' : String(options.method);
-                    const headers = options.headers === undefined ? {} : options.headers;
+                    const rawHeaders = options.headers === undefined ? {} : options.headers
+                    const headers = serializeFetchHeaders(rawHeaders);
                     const body = options.body === undefined ? null : options.body;
                     globalThis.__phantom_fetch_resolvers[id] = {resolve: resolve, reject: reject};
                     globalThis.__phantom_pending_fetches.push({
