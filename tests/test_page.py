@@ -261,6 +261,7 @@ def test_page_reports_missing_module_urls_and_importers(phantom_client, http_ser
     assert "missing.js" in str(page.script_errors[0])
     assert "missing-module-page" in str(page.script_errors[0])
 
+
 def test_page_set_attribute_with_set_timeout(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/page/")
 
@@ -277,11 +278,13 @@ def test_page_set_attribute_with_set_timeout(phantom_client, http_server: str) -
 
     assert page.eval("document.body.getAttribute('delayed-timeout')") == "yes"
 
+
 def test_page_executes_a_dynamically_inserted_script(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/dynamic-script-page/")
 
     assert page.body is not None
     assert page.body.get_attribute("dynamic-script-ran") == "yes"
+
 
 def test_page_executes_a_dynamically_inserted_script_chain(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/dynamic-script-chain-page/")
@@ -289,11 +292,13 @@ def test_page_executes_a_dynamically_inserted_script_chain(phantom_client, http_
     assert page.body.get_attribute("first-dynamic-script-ran") == "yes"
     assert page.body.get_attribute("second-dynamic-script-ran") == "yes"
 
+
 def test_page_executes_a_relative_path_script(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/dynamic-script-relative-page/")
 
     assert page.body.get_attribute("relative-dynamic-script-ran") == "yes"
     assert page.script_errors == []
+
 
 def test_page_records_errors_from_dynamically_inserted_scripts(
     phantom_client, http_server: str
@@ -305,6 +310,7 @@ def test_page_records_errors_from_dynamically_inserted_scripts(
     assert len(page.script_errors) == 1
     assert isinstance(page.script_errors[0], JSRuntimeError)
     assert "dynamic script failure" in str(page.script_errors[0])
+
 
 def test_page_local_storage_reads_imported_state(
     phantom_client, http_server: str
@@ -414,6 +420,7 @@ def test_page_local_storage_is_shared_by_pages_on_same_origin(phantom_client, ht
 
     assert second_page.eval("localStorage.getItem('theme');") == "dark"
 
+
 def test_page_session_storage_is_isolated_between_pages(phantom_client, http_server: str) -> None:
     first_page = phantom_client.new_page(f"{http_server}/page/")
     first_page.eval("sessionStorage.setItem('draft', 'hello')")
@@ -422,6 +429,7 @@ def test_page_session_storage_is_isolated_between_pages(phantom_client, http_ser
 
     assert first_page.eval("sessionStorage.getItem('draft')") == 'hello'
     assert second_page.eval("sessionStorage.getItem('draft')") is None
+
 
 def test_page_session_storage_survives_same_page_navigation(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}")
@@ -450,8 +458,19 @@ def test_page_session_storage_supports_storage_api(phantom_client, http_server: 
 
     assert page.eval("sessionStorage.length") == 0
 
+
 def test_page_self_aliases_window(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/page/")
 
     assert page.eval("self === window") is True
     assert page.eval("self.document === document") is True
+
+def test_page_button_click_starts_script_execute(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/button")
+
+    button = page.query_selector("#basic-button")
+    assert button is not None
+    button.click()
+
+    assert page.body is not None
+    assert page.body.get_attribute("after-click-script-ran") == "yes"

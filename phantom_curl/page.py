@@ -416,6 +416,24 @@ class Page:
         if self.url is not None:
             self._module_loader = ModuleLoader(self._context, self._session, self.url)
 
+    def _execute_pending_scripts(self) -> None:
+        while True:
+            new_scripts = [
+                script
+                for script in self._dom_builder.get_scripts()
+                if script["node_id"] not in self._executed_scripts_ids
+            ]
+
+            if not new_scripts:
+                break
+
+            for script in new_scripts:
+                self._executed_scripts_ids.add(script["node_id"])
+                if script["code_type"] != "module" and script["code_type"] not in self._CLASSIC_SCRIPT_TYPES:
+                    continue
+
+                self._execute_script(script, self.url)
+
     def _execute_module_script(self, entry: dict[str, str]) -> None:
         """Execute one inline or external module script through the page loader."""
         if self._module_loader is None:
@@ -523,22 +541,7 @@ class Page:
 
         self.script_errors = []
 
-        while True:
-            new_scripts = [
-                script
-                for script in self._dom_builder.get_scripts()
-                if script["node_id"] not in self._executed_scripts_ids
-            ]
-
-            if not new_scripts:
-                break
-
-            for script in new_scripts:
-                self._executed_scripts_ids.add(script["node_id"])
-                if script["code_type"] != "module" and script["code_type"] not in self._CLASSIC_SCRIPT_TYPES:
-                    continue
-
-                self._execute_script(script, url)
+        self._execute_pending_scripts()
 
         self.response = response
         return response
@@ -602,6 +605,7 @@ class Page:
         if timeout < 0:
             raise ValueError("timeout must be non-negative")
         self._drain_runtime(timeout)
+        self._execute_pending_scripts()
 
     def eval(self, js_code: str) -> Any:
         """Alias for :meth:`evaluate`, retained for a concise interactive API."""

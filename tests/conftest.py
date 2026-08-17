@@ -324,6 +324,30 @@ class _TestHandler(BaseHTTPRequestHandler):
             self._send(200, body, "text/html")
             return
 
+        if parsed.path == "/button":
+            body = b"""
+                <html>
+                    <body>
+                        <button id="basic-button">Button</button>
+                        <script>
+                            const button = document.getElementById('basic-button');
+                            button.addEventListener('click', () => {
+                                const script = document.createElement('script');
+                                script.src = '/after-click.js';
+                                document.head.appendChild(script);
+                            });
+                        </script>
+                    </body>
+                </html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/after-click.js":
+            body = b"document.body.setAttribute('after-click-script-ran', 'yes');"
+            self._send(200, body, "text/javascript")
+            return
+
         if parsed.path == "/interaction-queue/":
             body = b"""
                 <html>
