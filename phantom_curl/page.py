@@ -447,8 +447,13 @@ class Page:
         self._drain_runtime()
 
     def _execute_script(self, entry, url):
+        is_classic_script = entry["code_type"] != "module"
+
         self._context.eval(
-            f"globalThis.__phantom_current_script = globalThis.__phantom_elements[{json.dumps(entry['node_id'])}];"
+            f"""
+            globalThis.__phantom_current_script = globalThis.__phantom_elements[{json.dumps(entry['node_id'])}];
+            globalThis.document.currentScript = {"globalThis.__phantom_current_script" if is_classic_script else "null"};
+            """
         )
         try:
             if entry["code_type"] == "module":
@@ -484,7 +489,10 @@ class Page:
                     )
                     self.script_errors.append(e)
         finally:
-            self._context.eval("globalThis.__phantom_current_script = null;")
+            self._context.eval(
+                "globalThis.__phantom_current_script = null;"
+                "globalThis.document.currentScript = null;"
+            )
 
     def goto(self, url: str) -> Response:
         """

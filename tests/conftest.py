@@ -126,6 +126,20 @@ class _TestHandler(BaseHTTPRequestHandler):
             self._send(200, body, "text/html")
             return
 
+        if parsed.path == "/current-script-page/":
+            body = b"""
+                <html><body>
+                    <script>
+                        const currentScript = document.currentScript;
+                        const baseUrl = new URL(".", location);
+                        document.body.setAttribute("current-script-parent", currentScript.parentElement.tagName);
+                        document.body.setAttribute("resolved-base-url", baseUrl.href);
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
         if parsed.path == "/page/script.js":
             received_referer = "yes" if self.headers.get("Referer") else "no"
             body = f"document.body.setAttribute('external-ran', '{received_referer}');".encode()

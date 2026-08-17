@@ -68,6 +68,88 @@ def test_page_referrer_is_set_correctly(phantom_client, http_server: str) -> Non
     assert page.referrer == page.eval("document.referrer") == first_url
 
 
+def test_page_exposes_current_script_and_stringifiable_location(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/current-script-page/")
+    body = page.body
+
+    assert body is not None
+    assert body.get_attribute("current-script-parent") == "BODY"
+    assert body.get_attribute("resolved-base-url") == f"{http_server}/current-script-page/"
+    assert page.eval("document.currentScript") is None
+
+
+def test_page_url_constructs_and_resolves_relative_urls(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    result = json.loads(
+        page.eval(
+            """
+            const url = new URL(
+                "../product?id=7#details",
+                "https://example.test/catalog/items/",
+            );
+
+            JSON.stringify({
+                isExposedOnWindow: window.URL === URL && window.URLSearchParams === URLSearchParams,
+                href: url.href,
+                origin: url.origin,
+                protocol: url.protocol,
+                hostname: url.hostname,
+                pathname: url.pathname,
+                search: url.search,
+                hash: url.hash,
+            });
+            """
+        )
+    )
+
+    assert result == {
+        "isExposedOnWindow": True,
+        "href": "https://example.test/catalog/product?id=7#details",
+        "origin": "https://example.test",
+        "protocol": "https:",
+        "hostname": "example.test",
+        "pathname": "/catalog/product",
+        "search": "?id=7",
+        "hash": "#details",
+    }
+
+
+def test_page_url_search_params_read_and_update_query_strings(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    result = json.loads(
+        page.eval(
+            """
+            const params = new URLSearchParams("tag=python&tag=web+api");
+            params.append("page", 2);
+            params.set("tag", "runtime");
+
+            const url = new URL("https://example.test/articles?sort=recent");
+            url.searchParams.append("tag", "browser runtime");
+
+            JSON.stringify({
+                tag: params.get("tag"),
+                tags: params.getAll("tag"),
+                page: params.get("page"),
+                encoded: params.toString(),
+                href: url.href,
+                search: url.search,
+            });
+            """
+        )
+    )
+
+    assert result == {
+        "tag": "runtime",
+        "tags": ["runtime"],
+        "page": "2",
+        "encoded": "tag=runtime&page=2",
+        "href": "https://example.test/articles?sort=recent&tag=browser+runtime",
+        "search": "?sort=recent&tag=browser+runtime",
+    }
+
+
 def test_page_uses_default_navigator_languages(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/page/")
 

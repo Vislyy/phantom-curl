@@ -19,8 +19,9 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run su
 - 🌐 **Page fetch:** same-origin Promise-based `fetch()` supports common HTTP methods, string bodies, and JSON/text responses.
 - 💾 **Origin-scoped local storage:** `localStorage` persists across new pages for the same origin and is included in `StorageState` exports.
 - 🗃️ **Page-scoped session storage:** `sessionStorage` persists across navigations of one `Page`, but is isolated from other pages and exports.
+- 🔗 **Browser URL APIs:** `URL` resolves relative addresses and exposes common URL fields; `URLSearchParams` reads and mutates query strings.
 - 🖱️ **DOM events:** Python can click, type, and dispatch custom events; registered JavaScript handlers run in the page context.
-- ⏱️ **Page tasks:** Promise jobs and timers are drained by the page runtime; `document.write()` and dynamically inserted classic scripts during navigation are supported.
+- ⏱️ **Page tasks:** Promise jobs and timers are drained by the page runtime; `document.write()` and dynamically inserted supported scripts are executed after runtime work.
 - 🔁 **Retry policy:** retry transient network failures and selected HTTP status codes with exponential backoff.
 - 📦 **Portable session state:** export cookies and origin-scoped local storage to JSON and restore them in another client.
 - 🔒 **Execution limits:** each page JavaScript context has time and memory limits.
@@ -30,9 +31,10 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run su
 - This is not a browser replacement. `XMLHttpRequest`, CORS, streaming fetch bodies, complete browser-fingerprint spoofing, and CAPTCHA solving are not implemented.
 - `localStorage` supports `getItem()`, `setItem()`, `removeItem()`, `clear()`, `key()`, and `length`. It does not support named-property access such as `localStorage.theme`, `StorageEvent`, or synchronizing writes into pages that were already created.
 - `sessionStorage` has the same supported methods, but belongs to one `Page` and its origins. It survives `page.goto()` in that page, is isolated from other `Page` objects, and is not included in `StorageState`.
+- `URL` and `URLSearchParams` support common HTTP(S) URL construction, relative resolution, fields, query mutation, and iteration. They do not implement object-URL helpers or every WHATWG URL parsing edge case, such as internationalized domain names and malformed percent escapes.
 - `fetch()` is same-origin only; it has no redirect handling, `FormData`, `AbortController`, or browser `Headers`/`Request` objects.
 - ES modules support static same-origin imports and a limited `import`/`export` syntax. Dynamic imports, re-exports, top-level `await`, and live bindings are unsupported.
-- Event listeners run synchronously when JavaScript or `Element` triggers an event. `Element.click()`, `type()`, and `dispatch_event()` automatically drain queued fetches, Promise jobs, and zero-delay timers. Call `page.run_event_loop(timeout)` for timers scheduled in the future. Linkedom does not perform browser default actions such as form submission or link navigation, and scripts inserted after an interaction are not loaded automatically.
+- Event listeners run synchronously when JavaScript or `Element` triggers an event. `Element.click()`, `type()`, and `dispatch_event()` automatically drain queued fetches, Promise jobs, and zero-delay timers. Supported scripts inserted during that work are then discovered and executed. Call `page.run_event_loop(timeout)` for timers scheduled in the future. Linkedom does not perform browser default actions such as form submission or link navigation.
 
 ## ⚡ Quick Start
 

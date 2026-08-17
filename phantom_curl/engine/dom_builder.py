@@ -137,6 +137,9 @@ class DOMBuilder:
         globalThis.self = globalThis.window;
         globalThis.__phantom_document = parsed.document;
 
+        globalThis.window.URL = globalThis.URL;
+        globalThis.window.URLSearchParams = globalThis.URLSearchParams;
+
         globalThis.document.referrer = {json.dumps(referrer or "")};
 
         const loc = {{
@@ -150,6 +153,10 @@ class DOMBuilder:
             search: {json.dumps("?" + parsed_url.query if parsed_url.query else "")},
             hash: {json.dumps("#" + parsed_url.fragment if parsed_url.fragment else "")}
         }};
+        loc.toString = function() {{
+            return this.href;
+        }};
+
         globalThis.window.location = loc;
         globalThis.location = loc;
 

@@ -80,7 +80,25 @@ Done means:
 - a missing module reports its URL and importer;
 - tests cover a relative import and a cyclic import.
 
-## 5. Async client (future)
+## 5. Browser URL APIs (implemented subset)
+
+`URL` and `URLSearchParams` are installed as globals and on `window` before
+page scripts execute. The current implementation resolves relative HTTP(S)
+references, provides common URL fields and setters, and keeps `URL.search` and
+`URL.searchParams` synchronized. It intentionally excludes object-URL helpers
+and the rarest WHATWG URL parsing edge cases.
+
+Research topics: the WHATWG URL Standard, `application/x-www-form-urlencoded`
+encoding, the difference between URL paths and query strings, and iterable
+JavaScript APIs.
+
+Done means:
+
+- a relative reference resolves against an absolute base;
+- `window.URL` is the same constructor as global `URL`;
+- `URLSearchParams` preserves duplicate keys and updates a parent URL query.
+
+## 6. Async client (future)
 
 Only introduce it once the synchronous API is well tested. Keep the sync and
 async public interfaces aligned rather than allowing them to drift apart.

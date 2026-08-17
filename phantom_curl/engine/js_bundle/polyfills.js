@@ -225,6 +225,602 @@ if (typeof globalThis.console === "undefined") {
   };
 }
 
+/**
+ * URL and URLSearchParams polyfills
+ * ================================
+ *
+ * QuickJS provides ECMAScript primitives, but not browser URL APIs.  These
+ * implementations cover the HTTP(S)-oriented surface that page scripts use
+ * most often: resolving relative URLs, inspecting URL components, and reading
+ * or updating query parameters.
+ */
+(function () {
+  function formEncode(value) {
+    return encodeURIComponent(String(value))
+      .replace(/%20/g, "+")
+      .replace(/[!'()~]/g, function (character) {
+        return "%" + character.charCodeAt(0).toString(16).toUpperCase();
+      });
+  }
+
+  function formDecode(value) {
+    const source = String(value).replace(/\+/g, " ");
+    try {
+      return decodeURIComponent(source);
+    } catch (_) {
+      // Native URLSearchParams replaces malformed escapes instead of making
+      // a page fail. Keeping the original value is the safest lightweight
+      // fallback without implementing the full UTF-8 decoder here.
+      return source;
+    }
+  }
+
+  class PhantomURLSearchParams {
+    constructor(init, onChange) {
+      this._entries = [];
+      this._onChange = typeof onChange === "function" ? onChange : null;
+
+      if (init === undefined || init === null) {
+        return;
+      }
+
+      if (init instanceof PhantomURLSearchParams) {
+        this._entries = init._entries.map(function (entry) {
+          return [entry[0], entry[1]];
+        });
+        return;
+      }
+
+      if (typeof init === "string") {
+        this._replaceFromString(init, false);
+        return;
+      }
+
+      if (typeof init[Symbol.iterator] === "function") {
+        for (const pair of init) {
+          const values = Array.from(pair);
+          if (values.length !== 2) {
+            throw new TypeError("URLSearchParams initializer must contain key-value pairs");
+          }
+          this._entries.push([String(values[0]), String(values[1])]);
+        }
+        return;
+      }
+
+      for (const key of Object.keys(init)) {
+        this._entries.push([String(key), String(init[key])]);
+      }
+    }
+
+    get size() {
+      return this._entries.length;
+    }
+
+    _replaceFromString(value, shouldNotify) {
+      const source = String(value).replace(/^\?/, "");
+      this._entries = [];
+
+      if (source) {
+        for (const item of source.split("&")) {
+          if (!item) {
+            continue;
+          }
+
+          const separator = item.indexOf("=");
+          const rawName = separator === -1 ? item : item.slice(0, separator);
+          const rawValue = separator === -1 ? "" : item.slice(separator + 1);
+          this._entries.push([formDecode(rawName), formDecode(rawValue)]);
+        }
+      }
+
+      if (shouldNotify) {
+        this._notify();
+      }
+    }
+
+    _notify() {
+      if (this._onChange) {
+        this._onChange(this.toString());
+      }
+    }
+
+    append(name, value) {
+      this._entries.push([String(name), String(value)]);
+      this._notify();
+    }
+
+    delete(name, value) {
+      const key = String(name);
+      const matchesValue = arguments.length > 1;
+      const targetValue = String(value);
+      this._entries = this._entries.filter(function (entry) {
+        return entry[0] !== key || (matchesValue && entry[1] !== targetValue);
+      });
+      this._notify();
+    }
+
+    get(name) {
+      const key = String(name);
+      for (const entry of this._entries) {
+        if (entry[0] === key) {
+          return entry[1];
+        }
+      }
+      return null;
+    }
+
+    getAll(name) {
+      const key = String(name);
+      return this._entries
+        .filter(function (entry) {
+          return entry[0] === key;
+        })
+        .map(function (entry) {
+          return entry[1];
+        });
+    }
+
+    has(name, value) {
+      const key = String(name);
+      const matchesValue = arguments.length > 1;
+      const targetValue = String(value);
+      return this._entries.some(function (entry) {
+        return entry[0] === key && (!matchesValue || entry[1] === targetValue);
+      });
+    }
+
+    set(name, value) {
+      const key = String(name);
+      const stringValue = String(value);
+      let replaced = false;
+      const entries = [];
+
+      for (const entry of this._entries) {
+        if (entry[0] !== key) {
+          entries.push(entry);
+        } else if (!replaced) {
+          entries.push([key, stringValue]);
+          replaced = true;
+        }
+      }
+
+      if (!replaced) {
+        entries.push([key, stringValue]);
+      }
+
+      this._entries = entries;
+      this._notify();
+    }
+
+    sort() {
+      this._entries = this._entries
+        .map(function (entry, index) {
+          return { entry: entry, index: index };
+        })
+        .sort(function (left, right) {
+          if (left.entry[0] < right.entry[0]) return -1;
+          if (left.entry[0] > right.entry[0]) return 1;
+          return left.index - right.index;
+        })
+        .map(function (item) {
+          return item.entry;
+        });
+      this._notify();
+    }
+
+    entries() {
+      return this._entries.map(function (entry) {
+        return [entry[0], entry[1]];
+      })[Symbol.iterator]();
+    }
+
+    keys() {
+      return this._entries.map(function (entry) {
+        return entry[0];
+      })[Symbol.iterator]();
+    }
+
+    values() {
+      return this._entries.map(function (entry) {
+        return entry[1];
+      })[Symbol.iterator]();
+    }
+
+    forEach(callback, thisArg) {
+      if (typeof callback !== "function") {
+        throw new TypeError("URLSearchParams.forEach requires a callback function");
+      }
+
+      for (const entry of this._entries) {
+        callback.call(thisArg, entry[1], entry[0], this);
+      }
+    }
+
+    toString() {
+      return this._entries
+        .map(function (entry) {
+          return formEncode(entry[0]) + "=" + formEncode(entry[1]);
+        })
+        .join("&");
+    }
+
+    [Symbol.iterator]() {
+      return this.entries();
+    }
+  }
+
+  function normalizePath(path) {
+    const isAbsolute = path.startsWith("/");
+    const needsTrailingSlash = /\/(?:\.|\.\.)$/.test(path) || path.endsWith("/");
+    const segments = [];
+
+    for (const segment of path.split("/")) {
+      if (!segment || segment === ".") {
+        continue;
+      }
+      if (segment === "..") {
+        if (segments.length) {
+          segments.pop();
+        }
+        continue;
+      }
+      segments.push(segment);
+    }
+
+    let normalized = (isAbsolute ? "/" : "") + segments.join("/");
+    if (needsTrailingSlash && normalized && !normalized.endsWith("/")) {
+      normalized += "/";
+    }
+    return normalized || (isAbsolute ? "/" : "");
+  }
+
+  function encodeUrlPart(value) {
+    return encodeURI(String(value));
+  }
+
+  function formatHost(hostname, port) {
+    const host = hostname.includes(":") ? "[" + hostname + "]" : hostname;
+    return port ? host + ":" + port : host;
+  }
+
+  function parseAuthority(authority) {
+    let username = "";
+    let password = "";
+    let hasPassword = false;
+    let hostPort = authority;
+    const at = authority.lastIndexOf("@");
+
+    if (at !== -1) {
+      const credentials = authority.slice(0, at);
+      hostPort = authority.slice(at + 1);
+      const separator = credentials.indexOf(":");
+      username = encodeURIComponent(separator === -1 ? credentials : credentials.slice(0, separator));
+      if (separator !== -1) {
+        hasPassword = true;
+        password = encodeURIComponent(credentials.slice(separator + 1));
+      }
+    }
+
+    let hostname = hostPort;
+    let port = "";
+    if (hostPort.startsWith("[")) {
+      const closingBracket = hostPort.indexOf("]");
+      if (closingBracket === -1) {
+        throw new TypeError("Invalid URL host");
+      }
+      hostname = hostPort.slice(1, closingBracket).toLowerCase();
+      const portPart = hostPort.slice(closingBracket + 1);
+      if (portPart && !/^:\d*$/.test(portPart)) {
+        throw new TypeError("Invalid URL port");
+      }
+      port = portPart ? portPart.slice(1) : "";
+    } else {
+      const colon = hostPort.lastIndexOf(":");
+      if (colon !== -1 && hostPort.indexOf(":") === colon) {
+        hostname = hostPort.slice(0, colon);
+        port = hostPort.slice(colon + 1);
+      }
+      hostname = hostname.toLowerCase();
+    }
+
+    if (!hostname) {
+      throw new TypeError("Invalid URL host");
+    }
+    if (port && (!/^\d+$/.test(port) || Number(port) > 65535)) {
+      throw new TypeError("Invalid URL port");
+    }
+
+    return { username: username, password: password, hasPassword: hasPassword, hostname: hostname, port: port };
+  }
+
+  function createRecord(scheme, authority, path, search, hash, isOpaque) {
+    const hasAuthority = authority !== null;
+    const credentials = hasAuthority ? parseAuthority(authority) : {};
+    let port = credentials.port || "";
+    if ((scheme === "http" || scheme === "ws") && port === "80") port = "";
+    if ((scheme === "https" || scheme === "wss") && port === "443") port = "";
+
+    return {
+      scheme: scheme,
+      username: credentials.username || "",
+      password: credentials.password || "",
+      hasPassword: credentials.hasPassword || false,
+      hostname: credentials.hostname || "",
+      port: port,
+      hasAuthority: hasAuthority,
+      pathname: isOpaque ? encodeUrlPart(path) : encodeUrlPart(normalizePath(path || "/")),
+      search: search ? "?" + encodeUrlPart(search) : "",
+      hash: hash ? "#" + encodeUrlPart(hash) : "",
+      isOpaque: isOpaque,
+    };
+  }
+
+  function parseAbsolute(input) {
+    const match = /^([A-Za-z][A-Za-z\d+.-]*):([\s\S]*)$/.exec(input);
+    if (!match) {
+      throw new TypeError("Invalid URL");
+    }
+
+    const scheme = match[1].toLowerCase();
+    let rest = match[2];
+    let hash = "";
+    let search = "";
+    const hashIndex = rest.indexOf("#");
+    if (hashIndex !== -1) {
+      hash = rest.slice(hashIndex + 1);
+      rest = rest.slice(0, hashIndex);
+    }
+    const searchIndex = rest.indexOf("?");
+    if (searchIndex !== -1) {
+      search = rest.slice(searchIndex + 1);
+      rest = rest.slice(0, searchIndex);
+    }
+
+    if (rest.startsWith("//")) {
+      const authorityAndPath = rest.slice(2);
+      const slash = authorityAndPath.indexOf("/");
+      const authority = slash === -1 ? authorityAndPath : authorityAndPath.slice(0, slash);
+      const path = slash === -1 ? "/" : authorityAndPath.slice(slash);
+      return createRecord(scheme, authority, path, search, hash, false);
+    }
+
+    return createRecord(scheme, null, rest, search, hash, true);
+  }
+
+  function cloneRecord(record) {
+    return {
+      scheme: record.scheme,
+      username: record.username,
+      password: record.password,
+      hasPassword: record.hasPassword,
+      hostname: record.hostname,
+      port: record.port,
+      hasAuthority: record.hasAuthority,
+      pathname: record.pathname,
+      search: record.search,
+      hash: record.hash,
+      isOpaque: record.isOpaque,
+    };
+  }
+
+  function parseUrl(input, base) {
+    const source = String(input).trim();
+    if (/^[A-Za-z][A-Za-z\d+.-]*:/.test(source)) {
+      return parseAbsolute(source);
+    }
+    if (base === undefined) {
+      throw new TypeError("Invalid URL");
+    }
+
+    const baseRecord = parseAbsolute(String(base).trim());
+    if (!baseRecord.hasAuthority) {
+      throw new TypeError("Cannot resolve a relative URL against an opaque base URL");
+    }
+    if (source.startsWith("//")) {
+      return parseAbsolute(baseRecord.scheme + ":" + source);
+    }
+
+    let path = source;
+    let hash = "";
+    let search = null;
+    const hashIndex = path.indexOf("#");
+    if (hashIndex !== -1) {
+      hash = path.slice(hashIndex + 1);
+      path = path.slice(0, hashIndex);
+    }
+    const searchIndex = path.indexOf("?");
+    if (searchIndex !== -1) {
+      search = path.slice(searchIndex + 1);
+      path = path.slice(0, searchIndex);
+    }
+
+    const result = cloneRecord(baseRecord);
+    result.hash = hash ? "#" + encodeUrlPart(hash) : "";
+    result.search = search === null ? baseRecord.search : (search ? "?" + encodeUrlPart(search) : "?");
+
+    if (path) {
+      if (path.startsWith("/")) {
+        result.pathname = encodeUrlPart(normalizePath(path));
+      } else {
+        const lastSlash = baseRecord.pathname.lastIndexOf("/");
+        const directory = baseRecord.pathname.slice(0, lastSlash + 1);
+        result.pathname = encodeUrlPart(normalizePath(directory + path));
+      }
+    }
+
+    return result;
+  }
+
+  function serialize(record) {
+    let result = record.scheme + ":";
+    if (record.hasAuthority) {
+      let credentials = record.username;
+      if (record.hasPassword) {
+        credentials += ":" + record.password;
+      }
+      if (credentials) {
+        result += "//" + credentials + "@";
+      } else {
+        result += "//";
+      }
+      result += formatHost(record.hostname, record.port);
+    }
+    return result + record.pathname + record.search + record.hash;
+  }
+
+  class PhantomURL {
+    constructor(input, base) {
+      this._record = parseUrl(input, base);
+      this._searchParams = new PhantomURLSearchParams(this._record.search, (value) => {
+        this._record.search = value ? "?" + value : "";
+      });
+    }
+
+    get href() {
+      return serialize(this._record);
+    }
+
+    set href(value) {
+      this._record = parseUrl(value);
+      this._searchParams._replaceFromString(this._record.search, false);
+    }
+
+    get origin() {
+      if (!this._record.hasAuthority || !/^(https?|wss?)$/.test(this._record.scheme)) {
+        return "null";
+      }
+      return this._record.scheme + "://" + formatHost(this._record.hostname, this._record.port);
+    }
+
+    get protocol() {
+      return this._record.scheme + ":";
+    }
+
+    set protocol(value) {
+      const match = /^([A-Za-z][A-Za-z\d+.-]*):?$/.exec(String(value));
+      if (!match) return;
+      this._record.scheme = match[1].toLowerCase();
+      if ((this._record.scheme === "http" || this._record.scheme === "ws") && this._record.port === "80") {
+        this._record.port = "";
+      }
+      if ((this._record.scheme === "https" || this._record.scheme === "wss") && this._record.port === "443") {
+        this._record.port = "";
+      }
+    }
+
+    get username() {
+      return this._record.username;
+    }
+
+    set username(value) {
+      if (this._record.hasAuthority) this._record.username = encodeURIComponent(String(value));
+    }
+
+    get password() {
+      return this._record.password;
+    }
+
+    set password(value) {
+      if (this._record.hasAuthority) {
+        this._record.password = encodeURIComponent(String(value));
+        this._record.hasPassword = true;
+      }
+    }
+
+    get host() {
+      return this._record.hasAuthority ? formatHost(this._record.hostname, this._record.port) : "";
+    }
+
+    set host(value) {
+      if (!this._record.hasAuthority) return;
+      const authority = parseAuthority(String(value));
+      this._record.hostname = authority.hostname;
+      this._record.port = authority.port;
+    }
+
+    get hostname() {
+      return this._record.hostname;
+    }
+
+    set hostname(value) {
+      if (!this._record.hasAuthority || !value) return;
+      this._record.hostname = String(value).replace(/^\[|\]$/g, "").toLowerCase();
+    }
+
+    get port() {
+      return this._record.port;
+    }
+
+    set port(value) {
+      const port = String(value);
+      if (!this._record.hasAuthority || (port && (!/^\d+$/.test(port) || Number(port) > 65535))) {
+        return;
+      }
+      this._record.port = port;
+    }
+
+    get pathname() {
+      return this._record.pathname;
+    }
+
+    set pathname(value) {
+      const path = String(value);
+      if (this._record.isOpaque) {
+        this._record.pathname = encodeUrlPart(path);
+      } else {
+        this._record.pathname = encodeUrlPart(normalizePath(path.startsWith("/") ? path : "/" + path));
+      }
+    }
+
+    get search() {
+      return this._record.search;
+    }
+
+    set search(value) {
+      const source = String(value);
+      this._record.search = source ? "?" + encodeUrlPart(source.replace(/^\?/, "")) : "";
+      this._searchParams._replaceFromString(this._record.search, false);
+    }
+
+    get searchParams() {
+      return this._searchParams;
+    }
+
+    get hash() {
+      return this._record.hash;
+    }
+
+    set hash(value) {
+      const source = String(value);
+      this._record.hash = source ? "#" + encodeUrlPart(source.replace(/^#/, "")) : "";
+    }
+
+    toString() {
+      return this.href;
+    }
+
+    toJSON() {
+      return this.href;
+    }
+
+    static canParse(input, base) {
+      try {
+        parseUrl(input, base);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+  }
+
+  if (typeof globalThis.URLSearchParams === "undefined") {
+    globalThis.URLSearchParams = PhantomURLSearchParams;
+  }
+  if (typeof globalThis.URL === "undefined") {
+    globalThis.URL = PhantomURL;
+  }
+})();
+
 class PhantomLocalStorage {
   constructor(entries, recordOperation) {
     this._store = new Map(entries || []);
