@@ -57,6 +57,9 @@ or response-header access.
 Research topics: QuickJS Python `add_callable`, JSON serialization across a
 language boundary, URL joining, and QuickJS pending jobs/microtasks.
 
+For a detailed walkthrough of the implemented `Headers` bridge, see
+[Headers and the fetch bridge](learning/headers-fetch-bridge.md).
+
 Done means:
 
 - a page script can call `fetch('/api/value')` and read a text or JSON result;

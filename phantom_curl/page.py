@@ -218,7 +218,7 @@ class Page:
 
                     const id = ++globalThis.__phantom_fetch_id;
                     const method = options.method === undefined ? 'GET' : String(options.method);
-                    const rawHeaders = options.headers === undefined ? {} : options.headers
+                    const rawHeaders = options.headers === undefined ? {} : options.headers;
                     const headers = serializeFetchHeaders(rawHeaders);
                     const body = options.body === undefined ? null : options.body;
                     globalThis.__phantom_fetch_resolvers[id] = {resolve: resolve, reject: reject};
