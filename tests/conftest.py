@@ -20,6 +20,7 @@ class _TestHandler(BaseHTTPRequestHandler):
     flaky_requests = 0
     flaky_override_requests = 0
     math_module_requests = 0
+    abortable_requests = 0
 
     def log_message(self, format: str, *args: object) -> None:
         """Keep test output quiet."""
@@ -86,6 +87,15 @@ class _TestHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/set-cookie":
             self._send_json(200, {"ok": True}, **{"Set-Cookie": "from_fetch=yes; Path=/"})
+            return
+
+        if parsed.path == "/api/response-headers":
+            self._send_json(200, {"ok": True}, **{"X-Response-Id": "abc123"})
+            return
+
+        if parsed.path == "/api/abortable":
+            type(self).abortable_requests += 1
+            self._send_json(200, {"ok": True})
             return
 
         if parsed.path == "/slow":
@@ -460,9 +470,16 @@ def reset_flaky_request_counts() -> None:
     _TestHandler.flaky_requests = 0
     _TestHandler.flaky_override_requests = 0
     _TestHandler.math_module_requests = 0
+    _TestHandler.abortable_requests = 0
 
 
 @pytest.fixture
 def math_module_request_count() -> Callable[[], int]:
     """Return how many times the math module fixture was requested."""
     return lambda: _TestHandler.math_module_requests
+
+
+@pytest.fixture
+def abortable_request_count() -> Callable[[], int]:
+    """Return how many requests reached the abortable fetch fixture."""
+    return lambda: _TestHandler.abortable_requests

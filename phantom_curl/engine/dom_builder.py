@@ -141,6 +141,8 @@ class DOMBuilder:
         globalThis.window.URLSearchParams = globalThis.URLSearchParams;
         globalThis.window.Headers = globalThis.Headers;
         globalThis.window.FormData = globalThis.FormData;
+        globalThis.window.AbortSignal = globalThis.AbortSignal;
+        globalThis.window.AbortController = globalThis.AbortController;
 
         globalThis.document.referrer = {json.dumps(referrer or "")};
 

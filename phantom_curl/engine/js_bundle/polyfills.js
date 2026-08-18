@@ -1064,6 +1064,107 @@ if (typeof globalThis.console === "undefined") {
   }
 })();
 
+/**
+ * AbortController and AbortSignal polyfills
+ * ==========================================
+ *
+ * Provides the signal lifecycle needed to cancel a queued fetch before the
+ * Python networking bridge begins the blocking HTTP request.
+ */
+(function () {
+  function createAbortError() {
+    const error = new Error("The operation was aborted.");
+    error.name = "AbortError";
+    return error;
+  }
+
+  class PhantomAbortSignal {
+    constructor() {
+      this._aborted = false;
+      this._reason = undefined;
+      this._listeners = [];
+      this.onabort = null;
+    }
+
+    get aborted() {
+      return this._aborted;
+    }
+
+    get reason() {
+      return this._reason;
+    }
+
+    addEventListener(type, callback, options) {
+      if (type !== "abort" || typeof callback !== "function") {
+        return;
+      }
+
+      const once = Boolean(options && options.once);
+      this._listeners.push({ callback: callback, once: once });
+    }
+
+    removeEventListener(type, callback) {
+      if (type !== "abort") {
+        return;
+      }
+
+      this._listeners = this._listeners.filter(function (listener) {
+        return listener.callback !== callback;
+      });
+    }
+
+    throwIfAborted() {
+      if (this._aborted) {
+        throw this._reason;
+      }
+    }
+
+    _abort(reason) {
+      if (this._aborted) {
+        return;
+      }
+
+      this._aborted = true;
+      this._reason = reason === undefined ? createAbortError() : reason;
+      const event = { type: "abort", target: this, currentTarget: this };
+
+      if (typeof this.onabort === "function") {
+        this.onabort.call(this, event);
+      }
+
+      for (const listener of this._listeners.slice()) {
+        if (listener.once) {
+          this.removeEventListener("abort", listener.callback);
+        }
+        listener.callback.call(this, event);
+      }
+    }
+
+    static abort(reason) {
+      const controller = new PhantomAbortController();
+      controller.abort(reason);
+      return controller.signal;
+    }
+  }
+
+  class PhantomAbortController {
+    constructor() {
+      this.signal = new PhantomAbortSignal();
+    }
+
+    abort(reason) {
+      this.signal._abort(reason);
+    }
+  }
+
+  if (typeof globalThis.AbortSignal === "undefined") {
+    globalThis.AbortSignal = PhantomAbortSignal;
+  }
+  if (typeof globalThis.AbortController === "undefined") {
+    globalThis.AbortController = PhantomAbortController;
+  }
+})();
+
 class PhantomLocalStorage {
   constructor(entries, recordOperation) {
     this._store = new Map(entries || []);

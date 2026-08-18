@@ -46,3 +46,4 @@ htmlcov/
 test.py
 
 docs/environment-bridge-walkthrough.md
+docs/learning/*.md

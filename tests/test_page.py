@@ -224,6 +224,90 @@ def test_page_form_data_tracks_string_entries(phantom_client, http_server: str) 
     }
 
 
+def test_page_abort_controller_exposes_signal_lifecycle(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    result = json.loads(
+        page.eval(
+            """
+            const controller = new AbortController();
+            const eventTypes = [];
+            controller.signal.addEventListener("abort", event => eventTypes.push(event.type));
+            controller.abort("stop now");
+            controller.abort("ignored");
+
+            let thrownReason = null;
+            try {
+                controller.signal.throwIfAborted();
+            } catch (reason) {
+                thrownReason = reason;
+            }
+
+            JSON.stringify({
+                isExposedOnWindow:
+                    window.AbortController === AbortController && window.AbortSignal === AbortSignal,
+                aborted: controller.signal.aborted,
+                reason: controller.signal.reason,
+                eventTypes,
+                thrownReason,
+            });
+            """
+        )
+    )
+
+    assert result == {
+        "isExposedOnWindow": True,
+        "aborted": True,
+        "reason": "stop now",
+        "eventTypes": ["abort"],
+        "thrownReason": "stop now",
+    }
+
+def test_page_fetch_response_headers_shared_with_js(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval(
+        """
+        fetch("/api/response-headers")
+            .then(response => {
+                document.body.setAttribute(
+                    "result",
+                    JSON.stringify({
+                        isHeaders: response.headers instanceof Headers,
+                        responseId: response.headers.get("x-response-id"),
+                        contentType: response.headers.get("content-type"),
+                    })
+                );
+            });
+        """
+    )
+
+    result = json.loads(page.eval("document.body.getAttribute('result')"))
+
+    assert result == {
+        "isHeaders": True,
+        "responseId": "abc123",
+        "contentType": "application/json"
+    }
+
+def test_page_fetch_aborts_before_the_network_request_starts(
+    phantom_client, http_server: str, abortable_request_count
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval(
+        """
+        const controller = new AbortController();
+        fetch("/api/abortable", {signal: controller.signal})
+            .catch(error => document.body.setAttribute("abort-error-name", error.name));
+        controller.abort();
+        """
+    )
+
+    assert page.eval("document.body.getAttribute('abort-error-name')") == "AbortError"
+    assert abortable_request_count() == 0
+
+
 def test_page_fetch_sends_string_form_data_as_multipart(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/page/")
 

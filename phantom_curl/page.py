@@ -168,6 +168,7 @@ class Page:
                 if (!resolver) {
                     return;
                 }
+                cleanupFetchAbort(resolver);
 
                 const result = JSON.parse(resultJson);
                 if (result.error) {
@@ -180,6 +181,7 @@ class Page:
                     ok: result.ok,
                     status: result.status,
                     url: result.url,
+                    headers: new Headers(result.headers),
                     text: function () { return Promise.resolve(body); },
                     json: function () {
                         try {
@@ -237,6 +239,12 @@ class Page:
                 return {body: chunks.join(''), headers: formHeaders};
             }
 
+            function cleanupFetchAbort(resolver) {
+                if (resolver.signal && resolver.abortHandler) {
+                    resolver.signal.removeEventListener('abort', resolver.abortHandler);
+                }
+            }
+
             globalThis.fetch = function fetch(input, init) {
                 return new Promise(function (resolve, reject) {
                     if (typeof input !== 'string') {
@@ -250,6 +258,16 @@ class Page:
                         return;
                     }
 
+                    const signal = options.signal === undefined || options.signal === null ? null : options.signal;
+                    if (signal !== null && !(signal instanceof AbortSignal)) {
+                        reject(new TypeError('PhantomCurl fetch signal must be an AbortSignal'));
+                        return;
+                    }
+                    if (signal !== null && signal.aborted) {
+                        reject(signal.reason);
+                        return;
+                    }
+
                     const id = ++globalThis.__phantom_fetch_id;
                     const method = options.method === undefined ? 'GET' : String(options.method);
                     const rawHeaders = options.headers === undefined ? {} : options.headers;
@@ -260,7 +278,22 @@ class Page:
                         : null;
                     const body = serializedFormData === null ? rawBody : serializedFormData.body;
                     const requestHeaders = serializedFormData === null ? headers : serializedFormData.headers;
-                    globalThis.__phantom_fetch_resolvers[id] = {resolve: resolve, reject: reject};
+                    const abortHandler = function () {
+                        const pendingIndex = globalThis.__phantom_pending_fetches.findIndex(function (request) {
+                            return request.id === id;
+                        });
+                        if (pendingIndex !== -1) {
+                            globalThis.__phantom_pending_fetches.splice(pendingIndex, 1);
+                        }
+                        delete globalThis.__phantom_fetch_resolvers[id];
+                        reject(signal.reason);
+                    };
+                    globalThis.__phantom_fetch_resolvers[id] = {
+                        resolve: resolve,
+                        reject: reject,
+                        signal: signal,
+                        abortHandler: signal === null ? null : abortHandler
+                    };
                     globalThis.__phantom_pending_fetches.push({
                         id: id,
                         url: input,
@@ -268,6 +301,9 @@ class Page:
                         headers: requestHeaders,
                         body: body
                     });
+                    if (signal !== null) {
+                        signal.addEventListener('abort', abortHandler, {once: true});
+                    }
                 });
             };
             """

@@ -32,6 +32,11 @@ class FetchInterceptor:
             "status": response.status_code,
             "ok": response.ok,
             "url": response.url,
+            "headers": {
+                name: value
+                for name, value in response.headers.items()
+                if name.lower() != "set-cookie"
+            },
             "text": response.text,
         }
 

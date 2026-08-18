@@ -52,9 +52,11 @@ The current bridge is Promise-based and same-origin. It supports common HTTP
 methods, string bodies, JSON/text responses, cookies, Referer, plain-object
 headers, the implemented `Headers` subset, and the string-field `FormData`
 subset. `FormData` is encoded as `multipart/form-data`, but does not yet
-support `Blob`, `File`, or construction from an HTML form. The bridge
-deliberately does not implement CORS, redirects, streams, `AbortController`,
-`Request`, or response-header access.
+support `Blob`, `File`, or construction from an HTML form. `AbortController`
+can cancel a fetch while it is still in the JavaScript queue, but cannot
+interrupt an already running blocking HTTP request. The bridge deliberately
+does not implement CORS, redirects, streams, `Request`, or response-header
+access.
 
 Research topics: QuickJS Python `add_callable`, JSON serialization across a
 language boundary, URL joining, and QuickJS pending jobs/microtasks.
@@ -62,7 +64,9 @@ language boundary, URL joining, and QuickJS pending jobs/microtasks.
 For a detailed walkthrough of the `Headers` bridge, see
 [Headers and the fetch bridge](learning/headers-fetch-bridge.md). For the
 equivalent walkthrough of multipart form data, see
-[FormData and multipart fetch](learning/form-data-fetch.md).
+[FormData and multipart fetch](learning/form-data-fetch.md). For cancellation
+of a queued fetch, see
+[AbortController and queued fetch cancellation](learning/abort-controller-fetch.md).
 
 Done means:
 
