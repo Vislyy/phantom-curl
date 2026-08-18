@@ -406,6 +406,7 @@ class _TestHandler(BaseHTTPRequestHandler):
                 {
                     "body": body.decode(),
                     "header": self.headers.get("X-Page"),
+                    "content_type": self.headers.get("Content-Type"),
                     "referer": self.headers.get("Referer"),
                     "cookies": {name: morsel.value for name, morsel in cookies.items()},
                 },

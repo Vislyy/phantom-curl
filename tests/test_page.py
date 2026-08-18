@@ -186,6 +186,68 @@ def test_page_headers_normalize_and_iterate_values(phantom_client, http_server: 
     }
 
 
+def test_page_form_data_tracks_string_entries(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    result = json.loads(
+        page.eval(
+            """
+            const formData = new FormData();
+            formData.append("tag", "python");
+            formData.append("tag", "browser");
+            formData.append("page", 2);
+            formData.append("obsolete", "remove me");
+            formData.delete("obsolete");
+            formData.set("tag", "runtime");
+
+            JSON.stringify({
+                isExposedOnWindow: window.FormData === FormData,
+                tag: formData.get("tag"),
+                tags: formData.getAll("tag"),
+                page: formData.get("page"),
+                hasMissing: formData.has("missing"),
+                hasObsolete: formData.has("obsolete"),
+                entries: Array.from(formData),
+            });
+            """
+        )
+    )
+
+    assert result == {
+        "isExposedOnWindow": True,
+        "tag": "runtime",
+        "tags": ["runtime"],
+        "page": "2",
+        "hasMissing": False,
+        "hasObsolete": False,
+        "entries": [["tag", "runtime"], ["page", "2"]],
+    }
+
+
+def test_page_fetch_sends_string_form_data_as_multipart(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval(
+        """
+        const formData = new FormData();
+        formData.append("name", "Ada");
+        formData.append("role", "developer");
+
+        fetch("/api/echo", {method: "POST", body: formData})
+            .then(response => response.json())
+            .then(result => {
+                document.body.setAttribute("form-data-result", JSON.stringify(result));
+            });
+        """
+    )
+
+    result = json.loads(page.eval("document.body.getAttribute('form-data-result')"))
+
+    assert result["content_type"].startswith("multipart/form-data; boundary=----PhantomCurlFormBoundary")
+    assert 'Content-Disposition: form-data; name="name"\r\n\r\nAda\r\n' in result["body"]
+    assert 'Content-Disposition: form-data; name="role"\r\n\r\ndeveloper\r\n' in result["body"]
+
+
 def test_page_uses_default_navigator_languages(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/page/")
 
@@ -266,6 +328,7 @@ def test_page_fetches_a_post_with_headers_and_a_string_body(phantom_client, http
     assert result == {
         "body": '{"answer": 42}',
         "header": "yes",
+        "content_type": "application/json",
         "referer": f"{http_server}/page/",
         "cookies": {"session_id": "abc123"},
     }

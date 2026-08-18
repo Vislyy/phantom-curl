@@ -203,6 +203,40 @@ class Page:
                 return serialized;
             }
 
+            function hasFetchHeader(headers, name) {
+                const targetName = String(name).toLowerCase();
+                return Object.keys(headers).some(function (headerName) {
+                    return headerName.toLowerCase() === targetName;
+                });
+            }
+
+            function escapeFormDataName(name) {
+                return String(name).replace(/\\r/g, '%0D').replace(/\\n/g, '%0A').replace(/"/g, '%22');
+            }
+
+            function serializeFormData(formData, headers) {
+                const boundary = '----PhantomCurlFormBoundary' + Math.random().toString(16).slice(2);
+                const chunks = [];
+                for (const [name, value] of formData) {
+                    chunks.push(
+                        '--' + boundary + '\\r\\n'
+                        + 'Content-Disposition: form-data; name="' + escapeFormDataName(name) + '"\\r\\n\\r\\n'
+                        + value + '\\r\\n'
+                    );
+                }
+                chunks.push('--' + boundary + '--\\r\\n');
+
+                const formHeaders = Object.create(null);
+                for (const headerName of Object.keys(headers)) {
+                    formHeaders[headerName] = headers[headerName];
+                }
+                if (!hasFetchHeader(formHeaders, 'Content-Type')) {
+                    formHeaders['content-type'] = 'multipart/form-data; boundary=' + boundary;
+                }
+
+                return {body: chunks.join(''), headers: formHeaders};
+            }
+
             globalThis.fetch = function fetch(input, init) {
                 return new Promise(function (resolve, reject) {
                     if (typeof input !== 'string') {
@@ -220,13 +254,18 @@ class Page:
                     const method = options.method === undefined ? 'GET' : String(options.method);
                     const rawHeaders = options.headers === undefined ? {} : options.headers;
                     const headers = serializeFetchHeaders(rawHeaders);
-                    const body = options.body === undefined ? null : options.body;
+                    const rawBody = options.body === undefined ? null : options.body;
+                    const serializedFormData = rawBody instanceof FormData
+                        ? serializeFormData(rawBody, headers)
+                        : null;
+                    const body = serializedFormData === null ? rawBody : serializedFormData.body;
+                    const requestHeaders = serializedFormData === null ? headers : serializedFormData.headers;
                     globalThis.__phantom_fetch_resolvers[id] = {resolve: resolve, reject: reject};
                     globalThis.__phantom_pending_fetches.push({
                         id: id,
                         url: input,
                         method: method,
-                        headers: headers,
+                        headers: requestHeaders,
                         body: body
                     });
                 });

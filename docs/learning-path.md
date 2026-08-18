@@ -50,15 +50,19 @@ Done means:
 
 The current bridge is Promise-based and same-origin. It supports common HTTP
 methods, string bodies, JSON/text responses, cookies, Referer, plain-object
-headers, and the implemented `Headers` subset. It deliberately does not
-implement CORS, redirects, streams, `FormData`, `AbortController`, `Request`,
-or response-header access.
+headers, the implemented `Headers` subset, and the string-field `FormData`
+subset. `FormData` is encoded as `multipart/form-data`, but does not yet
+support `Blob`, `File`, or construction from an HTML form. The bridge
+deliberately does not implement CORS, redirects, streams, `AbortController`,
+`Request`, or response-header access.
 
 Research topics: QuickJS Python `add_callable`, JSON serialization across a
 language boundary, URL joining, and QuickJS pending jobs/microtasks.
 
-For a detailed walkthrough of the implemented `Headers` bridge, see
-[Headers and the fetch bridge](learning/headers-fetch-bridge.md).
+For a detailed walkthrough of the `Headers` bridge, see
+[Headers and the fetch bridge](learning/headers-fetch-bridge.md). For the
+equivalent walkthrough of multipart form data, see
+[FormData and multipart fetch](learning/form-data-fetch.md).
 
 Done means:
 

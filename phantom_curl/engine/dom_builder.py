@@ -140,6 +140,7 @@ class DOMBuilder:
         globalThis.window.URL = globalThis.URL;
         globalThis.window.URLSearchParams = globalThis.URLSearchParams;
         globalThis.window.Headers = globalThis.Headers;
+        globalThis.window.FormData = globalThis.FormData;
 
         globalThis.document.referrer = {json.dumps(referrer or "")};
 

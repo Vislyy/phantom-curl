@@ -16,7 +16,7 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run su
 - 🧠 **Embedded JavaScript:** QuickJS runs classic scripts and a limited static ES-module subset directly in the Python process.
 - 🏗️ **DOM interaction:** Linkedom supports selectors, attributes, clicks, text input, and DOM changes.
 - 🍪 **Shared session cookies:** requests, pages, `document.cookie`, and page `fetch()` use the same cookie jar.
-- 🌐 **Page fetch:** same-origin Promise-based `fetch()` supports common HTTP methods, string bodies, and JSON/text responses.
+- 🌐 **Page fetch:** same-origin Promise-based `fetch()` supports common HTTP methods, string or string-field `FormData` bodies, and JSON/text responses.
 - 💾 **Origin-scoped local storage:** `localStorage` persists across new pages for the same origin and is included in `StorageState` exports.
 - 🗃️ **Page-scoped session storage:** `sessionStorage` persists across navigations of one `Page`, but is isolated from other pages and exports.
 - 🔗 **Browser URL APIs:** `URL` resolves relative addresses and exposes common URL fields; `URLSearchParams` reads and mutates query strings.
@@ -32,7 +32,7 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run su
 - `localStorage` supports `getItem()`, `setItem()`, `removeItem()`, `clear()`, `key()`, and `length`. It does not support named-property access such as `localStorage.theme`, `StorageEvent`, or synchronizing writes into pages that were already created.
 - `sessionStorage` has the same supported methods, but belongs to one `Page` and its origins. It survives `page.goto()` in that page, is isolated from other `Page` objects, and is not included in `StorageState`.
 - `URL` and `URLSearchParams` support common HTTP(S) URL construction, relative resolution, fields, query mutation, and iteration. They do not implement object-URL helpers or every WHATWG URL parsing edge case, such as internationalized domain names and malformed percent escapes.
-- `fetch()` is same-origin only; it accepts plain-object headers and the implemented subset of `Headers`, but has no redirect handling, `FormData`, `AbortController`, or browser `Request` objects. Fetch responses do not yet expose a `headers` object.
+- `fetch()` is same-origin only; it accepts plain-object headers, the implemented `Headers` subset, and string-field `FormData`, which it sends as `multipart/form-data`. `FormData` does not yet support `Blob`, `File`, or construction from an HTML `<form>`. Fetch has no redirect handling, `AbortController`, or browser `Request` objects, and responses do not yet expose a `headers` object.
 - ES modules support static same-origin imports and a limited `import`/`export` syntax. Dynamic imports, re-exports, top-level `await`, and live bindings are unsupported.
 - Event listeners run synchronously when JavaScript or `Element` triggers an event. `Element.click()`, `type()`, and `dispatch_event()` automatically drain queued fetches, Promise jobs, and zero-delay timers. Supported scripts inserted during that work are then discovered and executed. Call `page.run_event_loop(timeout)` for timers scheduled in the future. Linkedom does not perform browser default actions such as form submission or link navigation.
 

@@ -25,8 +25,9 @@ QuickJS не має браузерного класу `Headers`. Крім тог
    серіалізувати в JSON і передати Python.
 
 Важливе обмеження: це підтримка **заголовків запиту**. Відповідь fetch поки
-не має `response.headers`, а `Request`, `FormData`, `AbortController`, CORS і
-потокові тіла ще не реалізовані.
+не має `response.headers`, а `Request`, `AbortController`, CORS і потокові
+тіла ще не реалізовані. Окремий string-only `FormData` subset уже існує й
+описаний у [розборі FormData](form-data-fetch.md).
 
 ## 2. Повний шлях даних
 
@@ -704,7 +705,8 @@ JS кидає `ReferenceError`, тому Promise fetch відхиляється 
 - Немає guards (`immutable`, `request`, `request-no-cors`, `response`).
 - Немає спеціальної семантики `Set-Cookie`.
 - Немає класу `Request`.
-- Немає `FormData` і multipart-кодування.
+- `FormData` підтримує лише строкові поля; `Blob`, `File` та HTML-форму в
+  конструкторі не підтримано.
 - Немає `AbortController`/`AbortSignal` і скасування запиту.
 - Немає CORS або preflight-запитів.
 

@@ -948,6 +948,122 @@ if (typeof globalThis.console === "undefined") {
   }
 })();
 
+/**
+ * FormData polyfill
+ * =================
+ *
+ * Provides the string-field subset of the browser FormData API. Binary values
+ * and HTML form-element initialization require Blob/File and form controls,
+ * which the lightweight runtime does not implement yet.
+ */
+(function () {
+  class PhantomFormData {
+    constructor(form) {
+      if (form !== undefined) {
+        throw new TypeError("PhantomCurl FormData does not support HTML form initialization");
+      }
+      this._entries = [];
+    }
+
+    append(name, value) {
+      this._entries.push([String(name), String(value)]);
+    }
+
+    delete(name) {
+      const targetName = String(name);
+      this._entries = this._entries.filter(function (entry) {
+        return entry[0] !== targetName;
+      });
+    }
+
+    get(name) {
+      const targetName = String(name);
+      for (const entry of this._entries) {
+        if (entry[0] === targetName) {
+          return entry[1];
+        }
+      }
+      return null;
+    }
+
+    getAll(name) {
+      const targetName = String(name);
+      return this._entries
+        .filter(function (entry) {
+          return entry[0] === targetName;
+        })
+        .map(function (entry) {
+          return entry[1];
+        });
+    }
+
+    has(name) {
+      const targetName = String(name);
+      return this._entries.some(function (entry) {
+        return entry[0] === targetName;
+      });
+    }
+
+    set(name, value) {
+      const targetName = String(name);
+      const stringValue = String(value);
+      let replaced = false;
+      const entries = [];
+
+      for (const entry of this._entries) {
+        if (entry[0] !== targetName) {
+          entries.push(entry);
+        } else if (!replaced) {
+          entries.push([targetName, stringValue]);
+          replaced = true;
+        }
+      }
+
+      if (!replaced) {
+        entries.push([targetName, stringValue]);
+      }
+
+      this._entries = entries;
+    }
+
+    entries() {
+      return this._entries.map(function (entry) {
+        return [entry[0], entry[1]];
+      })[Symbol.iterator]();
+    }
+
+    keys() {
+      return this._entries.map(function (entry) {
+        return entry[0];
+      })[Symbol.iterator]();
+    }
+
+    values() {
+      return this._entries.map(function (entry) {
+        return entry[1];
+      })[Symbol.iterator]();
+    }
+
+    forEach(callback, thisArg) {
+      if (typeof callback !== "function") {
+        throw new TypeError("FormData.forEach requires a callback function");
+      }
+
+      for (const entry of this._entries) {
+        callback.call(thisArg, entry[1], entry[0], this);
+      }
+    }
+
+    [Symbol.iterator]() {
+      return this.entries();
+    }
+  }
+
+  if (typeof globalThis.FormData === "undefined") {
+    globalThis.FormData = PhantomFormData;
+  }
+})();
+
 class PhantomLocalStorage {
   constructor(entries, recordOperation) {
     this._store = new Map(entries || []);
