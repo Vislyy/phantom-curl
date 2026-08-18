@@ -48,15 +48,18 @@ Done means:
 
 ## 3. A minimal `fetch` bridge (implemented)
 
-The current bridge is Promise-based and same-origin. It supports common HTTP
-methods, string bodies, JSON/text responses, cookies, Referer, plain-object
-headers, the implemented `Headers` subset, and the string-field `FormData`
-subset. `FormData` is encoded as `multipart/form-data`, but does not yet
-support `Blob`, `File`, or construction from an HTML form. `AbortController`
-can cancel a fetch while it is still in the JavaScript queue, but cannot
-interrupt an already running blocking HTTP request. The bridge deliberately
-does not implement CORS, redirects, streams, `Request`, or response-header
-access.
+The current bridge is Promise-based and same-origin by default. It supports
+common HTTP methods, string bodies, JSON/text responses, cookies, Referer,
+plain-object headers, the implemented `Headers` subset, response-header
+snapshots, and the string-field `FormData` subset. `FormData` is encoded as
+`multipart/form-data`, but does not yet support `Blob`, `File`, or
+construction from an HTML form. `OriginPolicy` can permit named target origins
+or all HTTP(S) origins. This is not CORS: there are no preflights or
+`Access-Control-Allow-*` checks, and cross-origin fetches retain the shared
+session's ordinary cookie behavior. `AbortController` can cancel a fetch while
+it is still in the JavaScript queue, but cannot interrupt an already running
+blocking HTTP request. The bridge deliberately does not implement CORS,
+redirects, streams, or `Request`.
 
 Research topics: QuickJS Python `add_callable`, JSON serialization across a
 language boundary, URL joining, and QuickJS pending jobs/microtasks.
@@ -72,7 +75,8 @@ Done means:
 
 - a page script can call `fetch('/api/value')` and read a text or JSON result;
 - its request shares the page's cookies and sends a referer;
-- cross-origin requests fail with an explanatory error;
+- a cross-origin request fails by default but succeeds for an origin explicitly
+  allowed by `OriginPolicy`;
 - a local HTTP-server test proves the behavior.
 
 ## 4. ESM loading (implemented subset)

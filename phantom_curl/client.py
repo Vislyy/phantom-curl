@@ -14,6 +14,7 @@ from typing import Union, Optional, Mapping, Any
 
 from phantom_curl.models import (
     ProxyConfig,
+    OriginPolicy,
     Response,
     RetryConfig,
     StealthConfig,
@@ -43,6 +44,7 @@ class PhantomClient:
         self,
         stealth_config: Optional[StealthConfig] = None,
         retry_config: Optional[RetryConfig] = None,
+        origin_policy: Optional[OriginPolicy] = None,
     ) -> None:
         """
         Creates a new PhantomClient.
@@ -52,9 +54,12 @@ class PhantomClient:
                 If not provided, default StealthConfig() is used.
             retry_config: Policy for retrying transient network failures.
                 If omitted, each request is attempted once.
+            origin_policy: Cross-origin access policy for JavaScript page
+                fetches. The default permits same-origin requests only.
         """
         self.stealth_config = stealth_config or StealthConfig()
         self.retry_config = retry_config or RetryConfig()
+        self.origin_policy = origin_policy or OriginPolicy()
 
         self._session = NetworkSession(
             stealth_config=self.stealth_config,
@@ -457,7 +462,7 @@ class PhantomClient:
             propagates directly out of this method — the already-created
             Page instance is not returned to the caller in that case.
         """
-        page = Page(session=self._session)
+        page = Page(session=self._session, origin_policy=self.origin_policy)
         if url:
             page.goto(url)
 

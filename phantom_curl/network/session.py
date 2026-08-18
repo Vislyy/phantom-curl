@@ -23,7 +23,15 @@ from typing import Any, Optional, cast
 from urllib.parse import urlsplit
 
 from phantom_curl.exceptions import ConnectionRejectedError, RequestTimeoutError
-from phantom_curl.models import Cookie, OriginStorage, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
+from phantom_curl.models import (
+    Cookie,
+    OriginStorage,
+    RequestOptions,
+    Response,
+    RetryConfig,
+    StealthConfig,
+    StorageState,
+)
 from phantom_curl.network.session_cookies import SessionCookies
 from phantom_curl.utils.cookie import cookiejar_to_tuple
 
@@ -77,7 +85,11 @@ class NetworkSession:
     requests — the same way a real browser session behaves.
     """
 
-    def __init__(self, stealth_config: StealthConfig, retry_config: Optional[RetryConfig] = None) -> None:
+    def __init__(
+        self,
+        stealth_config: StealthConfig,
+        retry_config: Optional[RetryConfig] = None,
+    ) -> None:
         """
         Creates a new network session configured with the given
         stealth settings.

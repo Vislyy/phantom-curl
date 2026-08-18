@@ -22,7 +22,7 @@ from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, FrozenSet, Iterator, Mapping, Optional
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urlparse, urlsplit
 from language_tags import tags
 
 from phantom_curl.utils import CaseInsensitiveDict, is_valid_origin
@@ -667,3 +667,62 @@ class ProxyConfig:
             username=unquote(parsed.username) if isinstance(parsed.username, str) else None,
             password=unquote(parsed.password) if isinstance(parsed.password, str) else None,
         )
+
+@dataclass(frozen=True, slots=True)
+class OriginPolicy:
+    """Control which cross-origin page ``fetch()`` requests are permitted.
+
+    Same-origin requests are always allowed. A caller can permit selected
+    target origins with ``allowed_origins`` or explicitly opt into all HTTP(S)
+    origins with ``allow_all_origins``. This policy is a PhantomCurl access
+    control, not browser CORS: it does not send preflight requests or inspect
+    ``Access-Control-Allow-*`` response headers.
+    """
+
+    allowed_origins: FrozenSet[str] = frozenset()
+    allow_all_origins: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate and canonicalize the configured target origins."""
+        if not isinstance(self.allow_all_origins, bool):
+            raise ValueError("allow_all_origins must be a boolean.")
+        if isinstance(self.allowed_origins, str):
+            raise ValueError("allowed_origins must be an iterable of origin strings.")
+
+        try:
+            origins = frozenset(self._normalize_origin(origin) for origin in self.allowed_origins)
+        except TypeError as error:
+            raise ValueError("allowed_origins must be an iterable of origin strings.") from error
+
+        if self.allow_all_origins and origins:
+            raise ValueError("allow_all_origins cannot be combined with allowed_origins.")
+
+        object.__setattr__(self, "allowed_origins", origins)
+
+    def allows(self, page_origin: str, target_origin: str) -> bool:
+        """Return whether a page may fetch the already-normalized target origin."""
+        return (
+            page_origin == target_origin
+            or self.allow_all_origins
+            or target_origin in self.allowed_origins
+        )
+
+    @staticmethod
+    def _normalize_origin(origin: object) -> str:
+        """Return a canonical HTTP(S) origin or raise ``ValueError``."""
+        if not isinstance(origin, str) or not is_valid_origin(origin):
+            raise ValueError("allowed_origins must contain HTTP(S) origins without paths or credentials.")
+
+        parsed = urlsplit(origin)
+        hostname = parsed.hostname
+        if hostname is None:
+            raise ValueError("allowed_origins must contain HTTP(S) origins without paths or credentials.")
+
+        scheme = parsed.scheme.lower()
+        host = hostname.lower()
+        rendered_host = f"[{host}]" if ":" in host else host
+        port = parsed.port
+        default_port = 443 if scheme == "https" else 80
+        if port in {None, default_port}:
+            return f"{scheme}://{rendered_host}"
+        return f"{scheme}://{rendered_host}:{port}"

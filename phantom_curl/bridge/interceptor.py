@@ -6,6 +6,7 @@ from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
 
 from phantom_curl.exceptions import InterceptorError
+from phantom_curl.models import OriginPolicy
 from phantom_curl.network.session import NetworkSession
 from phantom_curl.utils.request_builder import build_request_options
 
@@ -15,9 +16,10 @@ class FetchInterceptor:
 
     _SUPPORTED_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"})
 
-    def __init__(self, session: NetworkSession, page_url: str) -> None:
+    def __init__(self, session: NetworkSession, page_url: str, origin_policy: OriginPolicy) -> None:
         self._session = session
         self._page_url = page_url
+        self._origin_policy = origin_policy
 
     def handle(self, request: Mapping[str, Any]) -> dict[str, Any]:
         """Perform one supported fetch request and return its serializable result."""
@@ -70,12 +72,14 @@ class FetchInterceptor:
 
     def _resolve_url(self, requested_url: str) -> str:
         url = urljoin(self._page_url, requested_url)
-        if self._origin(url) != self._origin(self._page_url):
-            raise InterceptorError("PhantomCurl's minimal fetch only permits same-origin URLs")
+        if not self._origin_policy.allows(self._origin(self._page_url), self._origin(url)):
+            raise InterceptorError(
+                "PhantomCurl fetch only permits same-origin URLs unless OriginPolicy allows the target origin"
+            )
         return url
 
     @staticmethod
-    def _origin(url: str) -> tuple[str, str, int]:
+    def _origin(url: str) -> str:
         parsed = urlsplit(url)
         if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
             raise InterceptorError("fetch URL must resolve to an HTTP or HTTPS origin")
@@ -85,5 +89,10 @@ class FetchInterceptor:
         except ValueError as error:
             raise InterceptorError("fetch URL contains an invalid port") from error
 
-        default_port = 443 if parsed.scheme == "https" else 80
-        return parsed.scheme.lower(), parsed.hostname.lower(), port or default_port
+        scheme = parsed.scheme.lower()
+        hostname = parsed.hostname.lower()
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        default_port = 443 if scheme == "https" else 80
+        if port in {None, default_port}:
+            return f"{scheme}://{host}"
+        return f"{scheme}://{host}:{port}"

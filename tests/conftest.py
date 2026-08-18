@@ -447,6 +447,22 @@ def http_server() -> Iterator[str]:
         server.server_close()
 
 
+@pytest.fixture(scope="session")
+def cross_origin_server() -> Iterator[str]:
+    """Start the same test handler on another origin (a different port)."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _TestHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
 @pytest.fixture
 def network_session() -> Iterator[NetworkSession]:
     session = NetworkSession(StealthConfig())

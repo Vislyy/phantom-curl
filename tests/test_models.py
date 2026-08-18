@@ -1,7 +1,7 @@
 import pytest
 
 from phantom_curl.exceptions import HTTPError
-from phantom_curl.models import ProxyConfig, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
+from phantom_curl.models import OriginPolicy, ProxyConfig, RequestOptions, Response, RetryConfig, StealthConfig, StorageState
 
 
 def test_request_options_freezes_json_without_mutating_source() -> None:
@@ -196,6 +196,32 @@ def test_stealth_config_languages_immutable() -> None:
     languages.append("en-US")
 
     assert config.languages == ("uk-UA", "uk")
+
+
+def test_origin_policy_defaults_to_same_origin_and_normalizes_allowed_origins() -> None:
+    default_policy = OriginPolicy()
+    allowlist_policy = OriginPolicy(allowed_origins=("HTTPS://API.Example.test:443",))
+    open_policy = OriginPolicy(allow_all_origins=True)
+
+    assert default_policy.allows("https://page.example.test", "https://page.example.test")
+    assert not default_policy.allows("https://page.example.test", "https://api.example.test")
+    assert allowlist_policy.allowed_origins == frozenset({"https://api.example.test"})
+    assert allowlist_policy.allows("https://page.example.test", "https://api.example.test")
+    assert open_policy.allows("https://page.example.test", "https://unlisted.example.test")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"allowed_origins": "https://api.example.test"},
+        {"allowed_origins": ("https://api.example.test/path",)},
+        {"allow_all_origins": 1},
+        {"allow_all_origins": True, "allowed_origins": ("https://api.example.test",)},
+    ],
+)
+def test_origin_policy_rejects_ambiguous_or_invalid_configuration(kwargs) -> None:
+    with pytest.raises(ValueError):
+        OriginPolicy(**kwargs)
 
 def test_storage_state_round_trips_local_storage_per_origin() -> None:
     raw_state = {

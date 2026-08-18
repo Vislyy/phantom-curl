@@ -1,6 +1,6 @@
 import json
 
-from phantom_curl import PhantomClient, StealthConfig
+from phantom_curl import OriginPolicy, PhantomClient, StealthConfig
 from phantom_curl.models import StorageState
 from phantom_curl.exceptions import JSRuntimeError
 
@@ -394,6 +394,25 @@ def test_page_fetch_rejects_cross_origin_urls(phantom_client, http_server: str) 
         ".catch(error => document.body.setAttribute('cross-origin-error', error.message));"
     )
     assert "same-origin" in page.eval("document.body.getAttribute('cross-origin-error')")
+
+
+def test_page_fetch_allows_a_cross_origin_on_its_allowlist(http_server: str, cross_origin_server: str) -> None:
+    policy = OriginPolicy(allowed_origins=(cross_origin_server,))
+
+    with PhantomClient(origin_policy=policy) as client:
+        page = client.new_page(f"{http_server}/page/")
+        page.eval(
+            "fetch(" + json.dumps(f"{cross_origin_server}/api/value") + ")"
+            ".then(response => response.json())"
+            ".then(result => document.body.setAttribute('cross-origin-result', JSON.stringify(result)));"
+        )
+        result = json.loads(page.eval("document.body.getAttribute('cross-origin-result')"))
+
+    assert result == {
+        "value": "from-api",
+        "referer": f"{http_server}/page/",
+        "cookies": {},
+    }
 
 
 def test_page_fetches_a_post_with_headers_and_a_string_body(phantom_client, http_server: str) -> None:

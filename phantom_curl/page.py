@@ -33,7 +33,7 @@ from phantom_curl.bridge.module_loader import ModuleLoader
 from phantom_curl.engine.context import JSContext
 from phantom_curl.engine.dom_builder import DOMBuilder
 from phantom_curl.element import Element
-from phantom_curl.models import Response
+from phantom_curl.models import OriginPolicy, Response
 from phantom_curl.exceptions import InterceptorError, JSRuntimeError
 from phantom_curl.network.session import NetworkSession
 from phantom_curl.utils.request_builder import build_request_options
@@ -60,7 +60,7 @@ class Page:
         "application/x-javascript",
     })
 
-    def __init__(self, session: NetworkSession):
+    def __init__(self, session: NetworkSession, origin_policy: Optional[OriginPolicy] = None):
         """
         Creates a new Page backed by a fresh JS execution context.
 
@@ -70,6 +70,9 @@ class Page:
                 with (owned by) the caller (typically PhantomClient),
                 so that cookies set outside the page are visible to
                 requests made from within it, and vice versa.
+            origin_policy: Cross-origin access rule for this page's
+                JavaScript ``fetch()`` calls. It does not affect direct
+                requests made through ``NetworkSession``.
 
         Note:
             A new, isolated JSContext is created for every Page
@@ -80,6 +83,7 @@ class Page:
         """
         self._session = session
         self._stealth_config = session.stealth_config
+        self._origin_policy = origin_policy or OriginPolicy()
         self._fetch_interceptor: Optional[FetchInterceptor] = None
         self._module_loader: Optional[ModuleLoader] = None
         self._timer_bridge: Optional[TimerBridge] = None
@@ -149,7 +153,11 @@ class Page:
         if self.url is None:
             return
 
-        self._fetch_interceptor = FetchInterceptor(self._session, self.url)
+        self._fetch_interceptor = FetchInterceptor(
+            self._session,
+            self.url,
+            self._origin_policy,
+        )
         self._context.eval(
             """
             globalThis.__phantom_pending_fetches = [];

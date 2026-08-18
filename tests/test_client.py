@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from phantom_curl import PhantomClient, ProxyConfig, Response, RetryConfig, StealthConfig, StorageState
+from phantom_curl import OriginPolicy, PhantomClient, ProxyConfig, Response, RetryConfig, StealthConfig, StorageState
 
 
 def _successful_response() -> Response:
@@ -30,6 +30,13 @@ def test_client_get_passes_query_parameters_and_headers(phantom_client, http_ser
     assert response.status_code == 200
     assert response.ok is True
     assert response.json() == {"args": {"q": "python"}, "headers": {"User-Agent": "phantom-curl-test"}}
+
+
+def test_client_requests_ignore_page_origin_policy(cross_origin_server: str) -> None:
+    with PhantomClient(origin_policy=OriginPolicy()) as client:
+        response = client.get(f"{cross_origin_server}/api/value")
+
+    assert response.status_code == 200
 
 
 def test_client_post_serializes_nested_json(phantom_client, http_server: str) -> None:
