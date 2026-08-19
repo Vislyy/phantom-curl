@@ -232,6 +232,21 @@ class _TestHandler(BaseHTTPRequestHandler):
             self._send(200, b"document.body.setAttribute('external-module-ran', 'yes');", "text/javascript")
             return
 
+        if parsed.path == "/modules/cross-origin-entry.js":
+            self._send(
+                200,
+                (
+                    b"import { marker } from './cross-origin-dependency.js';"
+                    b"document.body.setAttribute('cross-origin-module-ran', marker);"
+                ),
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/cross-origin-dependency.js":
+            self._send(200, b"export const marker = 'yes';", "text/javascript")
+            return
+
         if parsed.path == "/modules/a.js":
             self._send(200, b"import './b.js'; export const a = 'a';", "text/javascript")
             return

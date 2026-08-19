@@ -510,7 +510,12 @@ class Page:
     def _install_module_loader(self) -> None:
         """Create the page-local module loader before page scripts execute."""
         if self.url is not None:
-            self._module_loader = ModuleLoader(self._context, self._session, self.url)
+            self._module_loader = ModuleLoader(
+                self._context,
+                self._session,
+                self.url,
+                self._origin_policy,
+            )
 
     def _execute_pending_scripts(self) -> None:
         while True:

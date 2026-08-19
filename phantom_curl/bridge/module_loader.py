@@ -1,4 +1,4 @@
-"""A small, same-origin loader for the supported subset of ES modules."""
+"""A small static ES-module loader with explicit cross-origin controls."""
 
 from __future__ import annotations
 
@@ -8,12 +8,13 @@ from urllib.parse import urljoin, urlsplit
 
 from phantom_curl.engine.context import JSContext
 from phantom_curl.exceptions import InterceptorError
+from phantom_curl.models import OriginPolicy
 from phantom_curl.network.session import NetworkSession
 from phantom_curl.utils.request_builder import build_request_options
 
 
 class ModuleLoader:
-    """Load and execute static same-origin JavaScript modules for one page."""
+    """Load and execute supported static JavaScript modules for one page."""
 
     _IMPORT_FROM_RE = re.compile(
         r"^\s*import\s+(?P<clause>[^;\n]+?)\s+from\s+(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
@@ -33,10 +34,17 @@ class ModuleLoader:
     )
     _IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
 
-    def __init__(self, context: JSContext, session: NetworkSession, page_url: str) -> None:
+    def __init__(
+        self,
+        context: JSContext,
+        session: NetworkSession,
+        page_url: str,
+        origin_policy: OriginPolicy,
+    ) -> None:
         self._context = context
         self._session = session
         self._page_url = page_url
+        self._origin_policy = origin_policy
         self._registered_modules: set[str] = set()
 
         self._context.eval(
@@ -187,9 +195,10 @@ class ModuleLoader:
 
     def _resolve_url(self, requested_url: str, importer_url: str) -> str:
         module_url = urljoin(importer_url, requested_url)
-        if self._origin(module_url) != self._origin(self._page_url):
+        if not self._origin_policy.allows(self._origin(self._page_url), self._origin(module_url)):
             raise InterceptorError(
-                f"Module {module_url!r} imported by {importer_url!r} is outside the page's same-origin boundary"
+                f"Module {module_url!r} imported by {importer_url!r} is outside the page's same-origin boundary "
+                "unless OriginPolicy allows the target origin"
             )
         return module_url
 
@@ -209,7 +218,7 @@ class ModuleLoader:
         return response.text
 
     @staticmethod
-    def _origin(url: str) -> tuple[str, str, int]:
+    def _origin(url: str) -> str:
         parsed = urlsplit(url)
         if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
             raise InterceptorError("Module URLs must resolve to an HTTP or HTTPS origin")
@@ -218,7 +227,13 @@ class ModuleLoader:
         except ValueError as error:
             raise InterceptorError("Module URL contains an invalid port") from error
 
-        return parsed.scheme.lower(), parsed.hostname.lower(), port or (443 if parsed.scheme == "https" else 80)
+        scheme = parsed.scheme.lower()
+        hostname = parsed.hostname.lower()
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        default_port = 443 if scheme == "https" else 80
+        if port in {None, default_port}:
+            return f"{scheme}://{host}"
+        return f"{scheme}://{host}:{port}"
 
     @classmethod
     def _require_identifier(cls, value: str, description: str) -> None:

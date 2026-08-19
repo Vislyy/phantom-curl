@@ -546,6 +546,47 @@ def test_page_reports_missing_module_urls_and_importers(phantom_client, http_ser
     assert "missing-module-page" in str(page.script_errors[0])
 
 
+def test_page_blocks_cross_origin_modules_without_an_origin_policy(
+    phantom_client, http_server: str, cross_origin_server: str
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+    module_url = f"{cross_origin_server}/modules/cross-origin-entry.js"
+
+    page.eval(
+        "const crossOriginModule = document.createElement('script');"
+        "crossOriginModule.type = 'module';"
+        f"crossOriginModule.src = {json.dumps(module_url)};"
+        "document.head.appendChild(crossOriginModule);"
+    )
+    page.run_event_loop()
+
+    assert page.body is not None
+    assert page.body.get_attribute("cross-origin-module-ran") is None
+    assert len(page.script_errors) == 1
+    assert "same-origin" in str(page.script_errors[0])
+
+
+def test_page_loads_an_allowed_cross_origin_module_and_its_dependencies(
+    http_server: str, cross_origin_server: str
+) -> None:
+    policy = OriginPolicy(allowed_origins=(cross_origin_server,))
+    module_url = f"{cross_origin_server}/modules/cross-origin-entry.js"
+
+    with PhantomClient(origin_policy=policy) as client:
+        page = client.new_page(f"{http_server}/page/")
+        page.eval(
+            "const crossOriginModule = document.createElement('script');"
+            "crossOriginModule.type = 'module';"
+            f"crossOriginModule.src = {json.dumps(module_url)};"
+            "document.head.appendChild(crossOriginModule);"
+        )
+        page.run_event_loop()
+
+    assert page.body is not None
+    assert page.body.get_attribute("cross-origin-module-ran") == "yes"
+    assert page.script_errors == []
+
+
 def test_page_set_attribute_with_set_timeout(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/page/")
 

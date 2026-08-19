@@ -33,7 +33,7 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run su
 - `sessionStorage` has the same supported methods, but belongs to one `Page` and its origins. It survives `page.goto()` in that page, is isolated from other `Page` objects, and is not included in `StorageState`.
 - `URL` and `URLSearchParams` support common HTTP(S) URL construction, relative resolution, fields, query mutation, and iteration. They do not implement object-URL helpers or every WHATWG URL parsing edge case, such as internationalized domain names and malformed percent escapes.
 - `fetch()` is same-origin by default. `OriginPolicy` can allow specific target origins or all HTTP(S) origins, but it is not browser CORS: PhantomCurl performs neither preflights nor `Access-Control-Allow-*` checks. Cross-origin requests still use the session's normal domain-based cookie jar; browser `credentials` modes are not implemented. Fetch accepts plain-object headers, the implemented `Headers` subset, and string-field `FormData`, which it sends as `multipart/form-data`. `FormData` does not yet support `Blob`, `File`, or construction from an HTML `<form>`. Responses expose a mutable `Headers` snapshot but hide `Set-Cookie`; `Request` objects and redirects are not implemented. An `AbortController` can cancel a queued fetch before Python begins its HTTP request, but cannot interrupt an already running blocking request.
-- ES modules support static same-origin imports and a limited `import`/`export` syntax. Dynamic imports, re-exports, top-level `await`, and live bindings are unsupported.
+- ES modules support static same-origin imports by default and use `OriginPolicy` for explicitly allowed cross-origin modules. The supported `import`/`export` syntax remains limited; dynamic imports, re-exports, top-level `await`, and live bindings are unsupported.
 - Event listeners run synchronously when JavaScript or `Element` triggers an event. `Element.click()`, `type()`, and `dispatch_event()` automatically drain queued fetches, Promise jobs, and zero-delay timers. Supported scripts inserted during that work are then discovered and executed. Call `page.run_event_loop(timeout)` for timers scheduled in the future. Linkedom does not perform browser default actions such as form submission or link navigation.
 
 ## ⚡ Quick Start
@@ -75,7 +75,7 @@ pip install "git+https://github.com/Vislyy/phantom-curl.git"
 PhantomCurl currently consists of three implemented layers:
 1. **Network Layer:** A wrapper over `curl_cffi` to execute requests with the required TLS fingerprint.
 2. **Environment Layer:** QuickJS + Linkedom sandbox that creates an isolated virtual DOM for each page navigation.
-3. **Page Layer:** Fetches HTML, scripts, modules, and same-origin page fetches through the shared network session, then exposes DOM elements to Python.
+3. **Page Layer:** Fetches HTML, scripts, modules, and page fetches through the shared network session, then exposes DOM elements to Python. Page fetches and static modules are same-origin by default and can share an explicit `OriginPolicy` allowlist.
 
 Read more in the [architecture documentation](docs/architecture.md).
 
