@@ -17,24 +17,29 @@ No Selenium, Playwright, or external browser driver. It can parse a page, run su
 - 🏗️ **DOM interaction:** Linkedom supports selectors, attributes, clicks, text input, and DOM changes.
 - 🍪 **Shared session cookies:** requests, pages, `document.cookie`, and page `fetch()` use the same cookie jar.
 - 🌐 **Page fetch:** Promise-based `fetch()` supports common HTTP methods, request/response `Headers`, string-field `FormData`, queued-request cancellation with `AbortController`, and an explicit cross-origin allowlist.
+- 📮 **Page XHR:** asynchronous `XMLHttpRequest` supports textual requests and responses, headers, ready-state callbacks, load/error/abort handlers, and the same cross-origin policy as `fetch()`.
 - 💾 **Origin-scoped local storage:** `localStorage` persists across new pages for the same origin and is included in `StorageState` exports.
 - 🗃️ **Page-scoped session storage:** `sessionStorage` persists across navigations of one `Page`, but is isolated from other pages and exports.
 - 🔗 **Browser URL APIs:** `URL` resolves relative addresses and exposes common URL fields; `URLSearchParams` reads and mutates query strings.
+- 🖼️ **Baseline image API:** `new Image()` creates a detached DOM `<img>` for scripts that configure images before inserting them.
+- ⏱️ **Baseline timing API:** `performance.timeOrigin` and `performance.now()` are available to page scripts.
 - 🖱️ **DOM events:** Python can click, type, and dispatch custom events; registered JavaScript handlers run in the page context.
-- ⏱️ **Page tasks:** Promise jobs and timers are drained by the page runtime; `document.write()` and dynamically inserted supported scripts are executed after runtime work.
+- ⏳ **Page tasks:** Promise jobs and timers are drained by the page runtime; `location.href` and `location.assign()` can queue a page navigation, while `document.write()` and dynamically inserted supported scripts are executed after runtime work.
 - 🔁 **Retry policy:** retry transient network failures and selected HTTP status codes with exponential backoff.
 - 📦 **Portable session state:** export cookies and origin-scoped local storage to JSON and restore them in another client.
 - 🔒 **Execution limits:** each page JavaScript context has time and memory limits.
 
 ## Current limitations
 
-- This is not a browser replacement. `XMLHttpRequest`, CORS, streaming fetch bodies, complete browser-fingerprint spoofing, and CAPTCHA solving are not implemented.
+- This is not a browser replacement. CORS, streaming fetch bodies, complete browser-fingerprint spoofing, and CAPTCHA solving are not implemented.
 - `localStorage` supports `getItem()`, `setItem()`, `removeItem()`, `clear()`, `key()`, and `length`. It does not support named-property access such as `localStorage.theme`, `StorageEvent`, or synchronizing writes into pages that were already created.
 - `sessionStorage` has the same supported methods, but belongs to one `Page` and its origins. It survives `page.goto()` in that page, is isolated from other `Page` objects, and is not included in `StorageState`.
 - `URL` and `URLSearchParams` support common HTTP(S) URL construction, relative resolution, fields, query mutation, and iteration. They do not implement object-URL helpers or every WHATWG URL parsing edge case, such as internationalized domain names and malformed percent escapes.
+- `Image` creates a detached `<img>` element, but it does not load, decode, or render image files and it does not dispatch image `load` or `error` events. `performance` only provides `timeOrigin` and `now()`; resource, navigation, and user-timing entries are unavailable.
 - `fetch()` is same-origin by default. `OriginPolicy` can allow specific target origins or all HTTP(S) origins, but it is not browser CORS: PhantomCurl performs neither preflights nor `Access-Control-Allow-*` checks. Cross-origin requests still use the session's normal domain-based cookie jar; browser `credentials` modes are not implemented. Fetch accepts plain-object headers, the implemented `Headers` subset, and string-field `FormData`, which it sends as `multipart/form-data`. `FormData` does not yet support `Blob`, `File`, or construction from an HTML `<form>`. Responses expose a mutable `Headers` snapshot but hide `Set-Cookie`; `Request` objects and redirects are not implemented. An `AbortController` can cancel a queued fetch before Python begins its HTTP request, but cannot interrupt an already running blocking request.
-- ES modules support static same-origin imports by default and use `OriginPolicy` for explicitly allowed cross-origin modules. The supported `import`/`export` syntax remains limited; dynamic imports, re-exports, top-level `await`, and live bindings are unsupported.
-- Event listeners run synchronously when JavaScript or `Element` triggers an event. `Element.click()`, `type()`, and `dispatch_event()` automatically drain queued fetches, Promise jobs, and zero-delay timers. Supported scripts inserted during that work are then discovered and executed. Call `page.run_event_loop(timeout)` for timers scheduled in the future. Linkedom does not perform browser default actions such as form submission or link navigation.
+- `XMLHttpRequest` supports asynchronous text requests only: `open()`, `setRequestHeader()`, `send()`, `abort()`, response-header getters, ready states, and the `onreadystatechange`, `onload`, `onerror`, and `onabort` properties. It uses the same URL validation and `OriginPolicy` as `fetch()`. Synchronous XHR, `addEventListener()`, upload progress, `Blob`/`ArrayBuffer`/`Document` response types, timeouts, credentials modes, and interrupting an already running request are unsupported.
+- ES modules support static same-origin imports by default and use `OriginPolicy` for explicitly allowed cross-origin modules. Named re-exports (`export { name } from ...`) and star re-exports (`export * from ...`) are supported, but dynamic imports, top-level `await`, `import.meta`, and live bindings are unsupported.
+- Event listeners run synchronously when JavaScript or `Element` triggers an event. `Element.click()`, `type()`, and `dispatch_event()` automatically drain queued fetches, Promise jobs, and zero-delay timers. Supported scripts inserted during that work are then discovered and executed. Call `page.run_event_loop(timeout)` for timers scheduled in the future; a queued `location.href` or `location.assign()` navigation is then followed automatically. Linkedom does not perform browser default actions such as form submission or anchor navigation.
 
 ## ⚡ Quick Start
 

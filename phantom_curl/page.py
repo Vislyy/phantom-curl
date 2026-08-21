@@ -25,7 +25,7 @@ import logging
 import time
 
 from typing import Any, ClassVar, FrozenSet, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from phantom_curl.bridge.interceptor import FetchInterceptor
 from phantom_curl.bridge.event_loop import TimerBridge
@@ -71,8 +71,8 @@ class Page:
                 so that cookies set outside the page are visible to
                 requests made from within it, and vice versa.
             origin_policy: Cross-origin access rule for this page's
-                JavaScript ``fetch()`` calls. It does not affect direct
-                requests made through ``NetworkSession``.
+                JavaScript ``fetch()`` and ``XMLHttpRequest`` calls. It does
+                not affect direct requests made through ``NetworkSession``.
 
         Note:
             A new, isolated JSContext is created for every Page
@@ -317,6 +317,244 @@ class Page:
             """
         )
 
+    def _install_xhr_bridge(self) -> None:
+        """Expose the supported asynchronous XMLHttpRequest subset to page scripts."""
+        if self._fetch_interceptor is None:
+            return
+
+        self._context.eval(
+            """
+            globalThis.__phantom_pending_xhrs = [];
+            globalThis.__phantom_xhr_instances = Object.create(null);
+            globalThis.__phantom_xhr_id = 0;
+
+            globalThis.__phantom_take_xhrs = function () {
+                const pending = globalThis.__phantom_pending_xhrs;
+                globalThis.__phantom_pending_xhrs = [];
+                return JSON.stringify(pending);
+            };
+
+            function PhantomXMLHttpRequest() {
+                this.readyState = PhantomXMLHttpRequest.UNSENT;
+                this.status = 0;
+                this.statusText = '';
+                this.responseText = '';
+                this.response = '';
+                this.responseURL = '';
+                this.responseType = '';
+                this.onreadystatechange = null;
+                this.onload = null;
+                this.onerror = null;
+                this.onabort = null;
+                this._method = null;
+                this._url = null;
+                this._requestHeaders = Object.create(null);
+                this._responseHeaders = Object.create(null);
+                this._sent = false;
+                this._requestId = null;
+            }
+
+            PhantomXMLHttpRequest.UNSENT = 0;
+            PhantomXMLHttpRequest.OPENED = 1;
+            PhantomXMLHttpRequest.HEADERS_RECEIVED = 2;
+            PhantomXMLHttpRequest.LOADING = 3;
+            PhantomXMLHttpRequest.DONE = 4;
+
+            PhantomXMLHttpRequest.prototype.UNSENT = PhantomXMLHttpRequest.UNSENT;
+            PhantomXMLHttpRequest.prototype.OPENED = PhantomXMLHttpRequest.OPENED;
+            PhantomXMLHttpRequest.prototype.HEADERS_RECEIVED = PhantomXMLHttpRequest.HEADERS_RECEIVED;
+            PhantomXMLHttpRequest.prototype.LOADING = PhantomXMLHttpRequest.LOADING;
+            PhantomXMLHttpRequest.prototype.DONE = PhantomXMLHttpRequest.DONE;
+
+            PhantomXMLHttpRequest.prototype._dispatch = function (type) {
+                const handler = this['on' + type];
+                if (typeof handler === 'function') {
+                    handler.call(this, {type: type, target: this, currentTarget: this});
+                }
+            };
+
+            PhantomXMLHttpRequest.prototype._setReadyState = function (nextState) {
+                this.readyState = nextState;
+                this._dispatch('readystatechange');
+            };
+
+            PhantomXMLHttpRequest.prototype.open = function (method, url, async) {
+                if (async === false) {
+                    throw new TypeError('PhantomCurl XMLHttpRequest only supports asynchronous requests');
+                }
+
+                this._method = String(method);
+                this._url = String(url);
+                this.status = 0;
+                this.statusText = '';
+                this.responseText = '';
+                this.response = '';
+                this.responseURL = '';
+                this._requestHeaders = Object.create(null);
+                this._responseHeaders = Object.create(null);
+                this._sent = false;
+                this._requestId = null;
+                this._setReadyState(PhantomXMLHttpRequest.OPENED);
+            };
+
+            PhantomXMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+                if (this.readyState !== PhantomXMLHttpRequest.OPENED || this._sent) {
+                    throw new Error('setRequestHeader() requires an opened, unsent XMLHttpRequest');
+                }
+
+                const requestedName = String(name);
+                const existingName = Object.keys(this._requestHeaders).find(function (headerName) {
+                    return headerName.toLowerCase() === requestedName.toLowerCase();
+                });
+                const headerName = existingName === undefined ? requestedName : existingName;
+                const headerValue = String(value);
+                this._requestHeaders[headerName] = existingName === undefined
+                    ? headerValue
+                    : this._requestHeaders[headerName] + ', ' + headerValue;
+            };
+
+            PhantomXMLHttpRequest.prototype.send = function (body) {
+                if (this.readyState !== PhantomXMLHttpRequest.OPENED || this._sent) {
+                    throw new Error('send() requires an opened, unsent XMLHttpRequest');
+                }
+                if (body !== undefined && body !== null && typeof body !== 'string') {
+                    throw new TypeError('PhantomCurl XMLHttpRequest currently supports string request bodies only');
+                }
+
+                const id = ++globalThis.__phantom_xhr_id;
+                const headers = Object.create(null);
+                for (const name of Object.keys(this._requestHeaders)) {
+                    headers[name] = this._requestHeaders[name];
+                }
+                const hasContentType = Object.keys(headers).some(function (name) {
+                    return name.toLowerCase() === 'content-type';
+                });
+                if (typeof body === 'string' && !hasContentType) {
+                    headers['content-type'] = 'text/plain;charset=UTF-8';
+                }
+
+                this._sent = true;
+                this._requestId = id;
+                globalThis.__phantom_xhr_instances[id] = this;
+                globalThis.__phantom_pending_xhrs.push({
+                    id: id,
+                    url: this._url,
+                    method: this._method,
+                    headers: headers,
+                    body: body === undefined ? null : body,
+                });
+            };
+
+            PhantomXMLHttpRequest.prototype.abort = function () {
+                if (this._requestId !== null) {
+                    const pendingIndex = globalThis.__phantom_pending_xhrs.findIndex(function (request) {
+                        return request.id === this._requestId;
+                    }, this);
+                    if (pendingIndex !== -1) {
+                        globalThis.__phantom_pending_xhrs.splice(pendingIndex, 1);
+                    }
+                    delete globalThis.__phantom_xhr_instances[this._requestId];
+                }
+
+                this._requestId = null;
+                this._sent = false;
+                if (this.readyState !== PhantomXMLHttpRequest.UNSENT) {
+                    this._setReadyState(PhantomXMLHttpRequest.DONE);
+                    this._dispatch('abort');
+                }
+            };
+
+            PhantomXMLHttpRequest.prototype.getResponseHeader = function (name) {
+                if (this.readyState < PhantomXMLHttpRequest.HEADERS_RECEIVED) {
+                    return null;
+                }
+
+                const requestedName = String(name).toLowerCase();
+                const actualName = Object.keys(this._responseHeaders).find(function (headerName) {
+                    return headerName.toLowerCase() === requestedName;
+                });
+                return actualName === undefined ? null : this._responseHeaders[actualName];
+            };
+
+            PhantomXMLHttpRequest.prototype.getAllResponseHeaders = function () {
+                if (this.readyState < PhantomXMLHttpRequest.HEADERS_RECEIVED) {
+                    return null;
+                }
+                return Object.keys(this._responseHeaders)
+                    .map(function (name) { return name + ': ' + this._responseHeaders[name]; }, this)
+                    .join('\\r\\n');
+            };
+
+            globalThis.__phantom_complete_xhr = function (id, resultJson) {
+                const xhr = globalThis.__phantom_xhr_instances[id];
+                delete globalThis.__phantom_xhr_instances[id];
+                if (!xhr) {
+                    return;
+                }
+
+                xhr._requestId = null;
+                xhr._sent = false;
+                const result = JSON.parse(resultJson);
+                if (result.error) {
+                    xhr.status = 0;
+                    xhr.statusText = '';
+                    xhr.responseText = '';
+                    xhr.response = '';
+                    xhr._setReadyState(PhantomXMLHttpRequest.DONE);
+                    xhr._dispatch('error');
+                    return;
+                }
+
+                xhr.status = result.status;
+                xhr.statusText = '';
+                xhr.responseURL = result.url;
+                xhr._responseHeaders = result.headers;
+                xhr._setReadyState(PhantomXMLHttpRequest.HEADERS_RECEIVED);
+                xhr.responseText = result.text;
+                xhr.response = result.text;
+                xhr._setReadyState(PhantomXMLHttpRequest.LOADING);
+                xhr._setReadyState(PhantomXMLHttpRequest.DONE);
+                xhr._dispatch('load');
+            };
+
+            globalThis.XMLHttpRequest = PhantomXMLHttpRequest;
+            if (globalThis.window) {
+                globalThis.window.XMLHttpRequest = PhantomXMLHttpRequest;
+            }
+            """
+        )
+
+    def _install_navigation_bridge(self) -> None:
+        self._context.eval(
+            """
+            globalThis.__phantom_pending_navigations = [];
+            globalThis.__phantom_take_navigations = function () {
+                const pending = globalThis.__phantom_pending_navigations;
+                globalThis.__phantom_pending_navigations = [];
+                return JSON.stringify(pending)
+            }
+
+            const locationObject = globalThis.location;
+            let currentHref = locationObject.href;
+
+            Object.defineProperty(locationObject, "href", {
+                configurable: true,
+                enumerable: true,
+                get() {
+                    return currentHref;
+                },
+                set(value) {
+                    currentHref = String(value);
+                    globalThis.__phantom_pending_navigations.push(currentHref);
+                }
+            });
+
+            locationObject.assign = function (value) {
+                locationObject.href = value;
+            }
+            """
+        )
+
     def _install_cookie_bridge(self) -> None:
         """Expose the page-visible portion of the session cookie jar to JavaScript."""
         if self.url is None:
@@ -416,26 +654,54 @@ class Page:
         cookie_string = self._session.cookies.document_cookie_string(self.url)
         self._context.eval(f"globalThis.__phantom_replace_document_cookie({json.dumps(cookie_string)});")
 
-    def _flush_fetch_requests(self) -> None:
-        """Send queued fetch requests and settle their JavaScript Promises."""
+    def _flush_fetch_requests(self) -> bool:
+        """Send queued fetch requests and report whether the queue contained work."""
         if self._fetch_interceptor is None:
-            return
+            return False
 
+        processed_request = False
         while True:
             self._context.execute_pending_jobs()
             self._flush_cookie_writes()
             pending = json.loads(self._context.eval("globalThis.__phantom_take_fetches()"))
             if not pending:
-                return
+                return processed_request
 
             for request in pending:
                 if not isinstance(request, dict) or not isinstance(request.get("id"), int):
                     raise InterceptorError("fetch bridge received invalid queued request data")
 
+                processed_request = True
                 result = self._fetch_interceptor.handle(request)
                 self._flush_cookie_writes()
                 self._context.eval(
                     "globalThis.__phantom_complete_fetch("
+                    f"{request['id']}, {json.dumps(json.dumps(result))}"
+                    ");"
+                )
+
+    def _flush_xhr_requests(self) -> bool:
+        """Send queued XMLHttpRequests and report whether the queue contained work."""
+        if self._fetch_interceptor is None:
+            return False
+
+        processed_request = False
+        while True:
+            self._context.execute_pending_jobs()
+            self._flush_cookie_writes()
+            pending = json.loads(self._context.eval("globalThis.__phantom_take_xhrs()"))
+            if not pending:
+                return processed_request
+
+            for request in pending:
+                if not isinstance(request, dict) or not isinstance(request.get("id"), int):
+                    raise InterceptorError("XMLHttpRequest bridge received invalid queued request data")
+
+                processed_request = True
+                result = self._fetch_interceptor.handle(request)
+                self._flush_cookie_writes()
+                self._context.eval(
+                    "globalThis.__phantom_complete_xhr("
                     f"{request['id']}, {json.dumps(json.dumps(result))}"
                     ");"
                 )
@@ -490,15 +756,38 @@ class Page:
             else:
                 raise InterceptorError("sessionStorage bridge received invalid operation data")
 
+    def _take_pending_navigations(self) -> Optional[str]:
+        pending_navigations = json.loads(self._context.eval("__phantom_take_navigations()"))
+        if not pending_navigations:
+            return None
+
+        requested_url = pending_navigations[-1]
+        if not isinstance(requested_url, str) or not requested_url:
+            return None
+
+        if self.url is None:
+            return None
+
+        final_url = urljoin(self.url, requested_url)
+
+        if urlsplit(final_url).scheme in ("http", "https"):
+            return final_url
+
+        return None
+
     def _drain_runtime(self, timeout: float = 0.0) -> None:
         """Run microtasks, queued fetches and timers due within ``timeout`` seconds."""
         deadline = time.monotonic() + timeout
         while True:
             self._flush_local_storage_operations()
             self._flush_session_storage_operations()
-            self._flush_fetch_requests()
+            processed_network_request = self._flush_fetch_requests()
+            processed_network_request = self._flush_xhr_requests() or processed_network_request
             self._flush_local_storage_operations()
             self._flush_session_storage_operations()
+            if processed_network_request:
+                continue
+
             if self._timer_bridge is None or not self._timer_bridge.run_due_timers():
                 if self._timer_bridge is None:
                     return
@@ -583,6 +872,17 @@ class Page:
                     script_response = self._session.request(script_options)
                     self._context.eval(script_response.text)
                     self._drain_runtime()
+                except JSRuntimeError as error:
+                    script_error = JSRuntimeError(
+                        f"External script execution failed for {script_url!r}: {error}",
+                        js_stack=error.js_stack,
+                        source=error.source,
+                    )
+                    logger.warning(
+                        "External script fetch/execution failed on %s (from %s): %s",
+                        script_url, url, script_error,
+                    )
+                    self.script_errors.append(script_error)
                 except Exception as e:
                     logger.warning(
                         "External script fetch/execution failed on %s (from %s): %s",
@@ -640,8 +940,10 @@ class Page:
         self.origin = self._dom_builder.origin
 
         self._install_cookie_bridge()
+        self._install_navigation_bridge()
         self._install_local_storage_bridge()
         self._install_fetch_bridge()
+        self._install_xhr_bridge()
         self._install_timer_bridge()
         self._install_module_loader()
         self._install_session_storage_bridge()
@@ -715,6 +1017,10 @@ class Page:
             raise ValueError("timeout must be non-negative")
         self._drain_runtime(timeout)
         self._execute_pending_scripts()
+
+        target_url = self._take_pending_navigations()
+        if target_url is not None:
+            self.goto(target_url)
 
     def eval(self, js_code: str) -> Any:
         """Alias for :meth:`evaluate`, retained for a concise interactive API."""

@@ -170,6 +170,11 @@ class DOMBuilder:
         if (typeof globalThis.__phantom_ensure_write === 'function') {{
             globalThis.__phantom_ensure_write();
         }}
+
+        if (typeof globalThis.__phantom_ensure_performance === 'function') {{
+            globalThis.__phantom_ensure_performance();
+        }}
+
         """
 
         try:

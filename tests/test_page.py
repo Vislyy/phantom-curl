@@ -546,6 +546,65 @@ def test_page_reports_missing_module_urls_and_importers(phantom_client, http_ser
     assert "missing-module-page" in str(page.script_errors[0])
 
 
+def test_page_loads_named_and_star_reexports(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/reexport-module-page/")
+
+    assert page.body is not None
+    assert page.body.get_attribute("named-reexport-result") == "named"
+    assert page.body.get_attribute("star-reexport-result") == "one:two:undefined"
+    assert page.body.get_attribute("export-after-brace-result") == "after-brace"
+    assert page.script_errors == []
+
+
+def test_page_reports_an_excerpt_for_unsupported_esm_syntax(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/unsupported-module-page/")
+
+    assert len(page.script_errors) == 1
+    error = str(page.script_errors[0])
+    assert "unsupported-export.js" in error
+    assert "unsupported ESM syntax near" in error
+    assert "export async function load()" in error
+
+
+def test_page_reports_the_module_execution_error_load_chain(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/module-execution-error-page/")
+
+    assert len(page.script_errors) == 1
+    error = str(page.script_errors[0])
+    assert "execution-error-leaf.js" in error
+    assert "execution-error-entry.js" in error
+    assert "load chain" in error
+    assert "value is not initialized" in error
+
+
+def test_page_follows_a_navigation_queued_by_location_href(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/start-navigation/")
+
+    page.run_event_loop(timeout=0.1)
+
+    assert page.url == f"{http_server}/navigation-target/"
+    assert page.body is not None
+    assert page.body.get_attribute("data-navigation-target") == "yes"
+    assert page.script_errors == []
+
+
+def test_page_loads_minified_static_module_imports(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval(
+        f"""
+        const minifiedScript = document.createElement('script');
+        minifiedScript.type = 'module';
+        minifiedScript.src = '{http_server}/modules/minified-entry.js';
+        document.head.appendChild(minifiedScript);
+        """
+    )
+
+    page.run_event_loop()
+
+    assert page.body.get_attribute("minified-module-ran") == "yes"
+    assert page.script_errors == []
+
 def test_page_blocks_cross_origin_modules_without_an_origin_policy(
     phantom_client, http_server: str, cross_origin_server: str
 ) -> None:
@@ -585,7 +644,6 @@ def test_page_loads_an_allowed_cross_origin_module_and_its_dependencies(
     assert page.body is not None
     assert page.body.get_attribute("cross-origin-module-ran") == "yes"
     assert page.script_errors == []
-
 
 def test_page_set_attribute_with_set_timeout(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/page/")
@@ -633,8 +691,13 @@ def test_page_records_errors_from_dynamically_inserted_scripts(
     assert page.is_loaded is True
     assert page.body is not None
     assert len(page.script_errors) == 1
-    assert isinstance(page.script_errors[0], JSRuntimeError)
-    assert "dynamic script failure" in str(page.script_errors[0])
+    error = page.script_errors[0]
+    assert isinstance(error, JSRuntimeError)
+    assert f"{http_server}/dynamic-script-error.js" in str(error)
+    assert "dynamic script failure" in str(error)
+    assert error.js_stack is not None
+    assert "dynamic script failure" in error.js_stack
+    assert error.source == "throw new Error('dynamic script failure');"
 
 
 def test_page_local_storage_reads_imported_state(
@@ -826,3 +889,189 @@ def test_page_fetch_accepts_headers_instance(phantom_client, http_server: str) -
 
     assert result["header"] == "from-headers"
     assert result["body"] == "payload"
+
+
+def test_page_image_constructor_creates_a_detached_image_element(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    result = json.loads(
+        page.eval(
+            """
+            const image = new Image(32, 16);
+            image.src = "/images/logo.png";
+            JSON.stringify({
+                isImageElement: image.tagName === "IMG",
+                isDetached: image.parentElement === null,
+                width: image.getAttribute("width"),
+                height: image.getAttribute("height"),
+                src: image.getAttribute("src"),
+                canCreateThroughWindow: (new window.Image()).tagName === "IMG",
+                canCreateThroughSelf: (new self.Image()).tagName === "IMG",
+            });
+            """
+        )
+    )
+
+    assert result == {
+        "isImageElement": True,
+        "isDetached": True,
+        "width": "32",
+        "height": "16",
+        "src": "/images/logo.png",
+        "canCreateThroughWindow": True,
+        "canCreateThroughSelf": True,
+    }
+
+
+def test_page_performance_exposes_a_baseline_clock(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    result = json.loads(
+        page.eval(
+            """
+            const firstReading = performance.now();
+            const secondReading = performance.now();
+            JSON.stringify({
+                hasTimeOrigin: Number.isFinite(performance.timeOrigin)
+                    && performance.timeOrigin > 0,
+                hasNumericReadings: Number.isFinite(firstReading)
+                    && Number.isFinite(secondReading),
+                hasNonNegativeReadings: firstReading >= 0 && secondReading >= 0,
+                isAvailableOnWindow: window.performance === performance,
+                isAvailableOnSelf: self.performance === performance,
+            });
+            """
+        )
+    )
+
+    assert result == {
+        "hasTimeOrigin": True,
+        "hasNumericReadings": True,
+        "hasNonNegativeReadings": True,
+        "isAvailableOnWindow": True,
+        "isAvailableOnSelf": True,
+    }
+
+
+def test_page_xml_http_request_sends_text_and_exposes_response_state(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval(
+        """
+        const xhr = new XMLHttpRequest();
+        const states = [];
+        xhr.onreadystatechange = function () {
+            states.push(xhr.readyState);
+        };
+        xhr.onload = function () {
+            document.body.setAttribute('xhr-result', JSON.stringify({
+                state: xhr.readyState,
+                status: xhr.status,
+                response: JSON.parse(xhr.responseText),
+                contentType: xhr.getResponseHeader('content-type'),
+                states: states,
+                responseURL: xhr.responseURL,
+                globalConstructor: window.XMLHttpRequest === XMLHttpRequest,
+            }));
+        };
+        xhr.open('POST', '/api/echo');
+        xhr.setRequestHeader('X-Page', 'from-xhr');
+        xhr.send('xhr payload');
+        """
+    )
+
+    assert page.body is not None
+    result = json.loads(page.body.get_attribute("xhr-result"))
+    assert result == {
+        "state": 4,
+        "status": 200,
+        "response": {
+            "body": "xhr payload",
+            "header": "from-xhr",
+            "content_type": "text/plain;charset=UTF-8",
+            "referer": f"{http_server}/page/",
+            "cookies": {},
+        },
+        "contentType": "application/json",
+        "states": [1, 2, 3, 4],
+        "responseURL": f"{http_server}/api/echo",
+        "globalConstructor": True,
+    }
+
+
+def test_page_xml_http_request_respects_the_origin_policy(
+    phantom_client, http_server: str, cross_origin_server: str
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval(
+        f"""
+        const xhr = new XMLHttpRequest();
+        const states = [];
+        xhr.onreadystatechange = function () {{
+            states.push(xhr.readyState);
+        }};
+        xhr.onerror = function () {{
+            document.body.setAttribute('xhr-error-result', JSON.stringify({{
+                state: xhr.readyState,
+                status: xhr.status,
+                responseText: xhr.responseText,
+                states: states,
+            }}));
+        }};
+        xhr.open('GET', {json.dumps(f"{cross_origin_server}/api/value")});
+        xhr.send();
+        """
+    )
+
+    assert page.body is not None
+    assert json.loads(page.body.get_attribute("xhr-error-result")) == {
+        "state": 4,
+        "status": 0,
+        "responseText": "",
+        "states": [1, 4],
+    }
+
+
+def test_page_xml_http_request_abort_removes_a_queued_request(
+    phantom_client, http_server: str, abortable_request_count
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval(
+        """
+        const xhr = new XMLHttpRequest();
+        xhr.onabort = function () {
+            document.body.setAttribute('xhr-was-aborted', String(xhr.readyState));
+        };
+        xhr.open('GET', '/api/abortable');
+        xhr.send();
+        xhr.abort();
+        """
+    )
+
+    assert page.body is not None
+    assert page.body.get_attribute("xhr-was-aborted") == "4"
+    assert abortable_request_count() == 0
+
+
+def test_page_xml_http_request_load_handler_can_start_fetch(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval(
+        """
+        const xhr = new XMLHttpRequest();
+        xhr.onload = function () {
+            fetch('/api/value')
+                .then(function (response) { return response.json(); })
+                .then(function (result) {
+                    document.body.setAttribute('xhr-follow-up-fetch', result.value);
+                });
+        };
+        xhr.open('GET', '/api/value');
+        xhr.send();
+        """
+    )
+
+    assert page.body is not None
+    assert page.body.get_attribute("xhr-follow-up-fetch") == "from-api"

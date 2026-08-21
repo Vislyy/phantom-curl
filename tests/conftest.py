@@ -223,6 +223,68 @@ class _TestHandler(BaseHTTPRequestHandler):
             self._send(200, body, "text/html")
             return
 
+        if parsed.path == "/reexport-module-page/":
+            body = b"""
+                <html><body>
+                    <script type="module">
+                        import { result } from '../modules/named-reexport-entry.js';
+                        document.body.setAttribute('named-reexport-result', result);
+                    </script>
+                    <script type="module">
+                        import * as values from '../modules/star-reexport-entry.js';
+                        document.body.setAttribute(
+                            'star-reexport-result',
+                            values.first + ':' + values.second + ':' + String(values.default),
+                        );
+                    </script>
+                    <script type="module">
+                        import { marker } from '../modules/export-after-brace.js';
+                        document.body.setAttribute('export-after-brace-result', marker());
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/unsupported-module-page/":
+            body = b"""
+                <html><body>
+                    <script type="module" src="../modules/unsupported-export.js"></script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/module-execution-error-page/":
+            body = b"""
+                <html><body>
+                    <script type="module" src="../modules/execution-error-entry.js"></script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/start-navigation/":
+            body = b"""
+                <html><body>
+                    <script>
+                        setTimeout(function () {
+                            location.href = "/navigation-target/";
+                        }, 10);
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/navigation-target/":
+            self._send(
+                200,
+                b'<html><body data-navigation-target="yes">Arrived</body></html>',
+                "text/html",
+            )
+            return
+
         if parsed.path == "/modules/math.js":
             type(self).math_module_requests += 1
             self._send(200, b"export const answer = 42;\nexport default 'math';", "text/javascript")
@@ -253,6 +315,75 @@ class _TestHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/modules/b.js":
             self._send(200, b"import './a.js'; export const b = 'b';", "text/javascript")
+            return
+
+        if parsed.path == "/modules/minified-entry.js":
+            self._send(200, b"""
+                import{marker}from"./minified-dependency.js";
+                document.body.setAttribute("minified-module-ran", marker);
+                """,
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/minified-dependency.js":
+            self._send(200, b"""
+                export const marker = "yes";
+                """,
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/named-reexport-entry.js":
+            self._send(
+                200,
+                b'export{answer as result}from"./named-reexport-source.js";',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/named-reexport-source.js":
+            self._send(200, b'export const answer = "named";', "text/javascript")
+            return
+
+        if parsed.path == "/modules/star-reexport-entry.js":
+            self._send(200, b'export*from"./star-reexport-source.js";', "text/javascript")
+            return
+
+        if parsed.path == "/modules/star-reexport-source.js":
+            self._send(
+                200,
+                b'export const first = "one"; export const second = "two"; export default "hidden";',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/unsupported-export.js":
+            self._send(
+                200,
+                b"export async function load() { return 'not supported yet'; }",
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/export-after-brace.js":
+            self._send(
+                200,
+                b'function buildMarker() { return "after-brace"; }export{buildMarker as marker};',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/execution-error-entry.js":
+            self._send(200, b'import "./execution-error-leaf.js";', "text/javascript")
+            return
+
+        if parsed.path == "/modules/execution-error-leaf.js":
+            self._send(
+                200,
+                b'const copy = value; const value = "initialized too late";',
+                "text/javascript",
+            )
             return
 
         if parsed.path == "/dynamic-script-page/":

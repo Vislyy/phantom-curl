@@ -7,7 +7,7 @@ import re
 from urllib.parse import urljoin, urlsplit
 
 from phantom_curl.engine.context import JSContext
-from phantom_curl.exceptions import InterceptorError
+from phantom_curl.exceptions import InterceptorError, JSRuntimeError
 from phantom_curl.models import OriginPolicy
 from phantom_curl.network.session import NetworkSession
 from phantom_curl.utils.request_builder import build_request_options
@@ -17,20 +17,31 @@ class ModuleLoader:
     """Load and execute supported static JavaScript modules for one page."""
 
     _IMPORT_FROM_RE = re.compile(
-        r"^\s*import\s+(?P<clause>[^;\n]+?)\s+from\s+(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
+        r"(?:^|(?<=;))\s*import\s*(?P<clause>[^;\n]+?)\s*from\s*(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
         re.MULTILINE,
     )
     _IMPORT_SIDE_EFFECT_RE = re.compile(
-        r"^\s*import\s+(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
+        r"(?:^|(?<=;))\s*import\s*(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
         re.MULTILINE,
     )
     _EXPORT_DECLARATION_RE = re.compile(
-        r"(?:^|(?<=;))\s*export\s+(?P<kind>const|let|var|function|class)\s+(?P<name>[A-Za-z_$][\w$]*)",
+        r"(?:^|(?<=[;}]))\s*export\s+(?P<kind>const|let|var|function|class)\s+(?P<name>[A-Za-z_$][\w$]*)",
         re.MULTILINE,
     )
-    _EXPORT_LIST_RE = re.compile(r"(?:^|(?<=;))\s*export\s*\{(?P<bindings>[^}]+)\}\s*;?", re.MULTILINE)
+    _EXPORT_FROM_RE = re.compile(
+        r"(?:^|(?<=[;}]))\s*export\s*\{\s*(?P<bindings>[^}]+?)\s*\}\s*from\s*(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
+        re.MULTILINE,
+    )
+    _EXPORT_STAR_FROM_RE = re.compile(
+        r"(?:^|(?<=[;}]))\s*export\s*\*\s*from\s*(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
+        re.MULTILINE,
+    )
+    _EXPORT_LIST_RE = re.compile(r"(?:^|(?<=[;}]))\s*export\s*\{(?P<bindings>[^}]+)\}\s*;?", re.MULTILINE)
     _EXPORT_DEFAULT_RE = re.compile(
-        r"(?:^|(?<=;))\s*export\s+default\s+(?P<expression>[^;\n]+);?", re.MULTILINE
+        r"(?:^|(?<=[;}]))\s*export\s+default\s+(?P<expression>[^;\n]+);?", re.MULTILINE
+    )
+    _UNTRANSFORMED_ESM_RE = re.compile(
+        r"(?:^|(?<=[;}]))\s*(?P<keyword>import|export)\b", re.MULTILINE
     )
     _IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
 
@@ -51,6 +62,7 @@ class ModuleLoader:
             """
             globalThis.__phantom_module_exports = Object.create(null);
             globalThis.__phantom_module_factories = Object.create(null);
+            globalThis.__phantom_module_execution_stack = [];
 
             globalThis.__phantom_require = function (url) {
                 if (Object.prototype.hasOwnProperty.call(globalThis.__phantom_module_exports, url)) {
@@ -64,8 +76,31 @@ class ModuleLoader:
 
                 const exports = Object.create(null);
                 globalThis.__phantom_module_exports[url] = exports;
-                factory(exports, globalThis.__phantom_require);
-                return exports;
+                globalThis.__phantom_module_execution_stack.push(url);
+
+                try {
+                    factory(exports, globalThis.__phantom_require);
+                    return exports;
+                } catch (error) {
+                    delete globalThis.__phantom_module_exports[url];
+                    if (error && error.__phantom_module_execution_error) {
+                        throw error;
+                    }
+
+                    const message = error && typeof error === "object" && "message" in error
+                        ? error.message
+                        : String(error);
+                    const executionError = new Error(
+                        "PhantomCurl module execution failed in " + url
+                        + " (load chain: "
+                        + globalThis.__phantom_module_execution_stack.join(" -> ")
+                        + "): " + message
+                    );
+                    executionError.__phantom_module_execution_error = true;
+                    throw executionError;
+                } finally {
+                    globalThis.__phantom_module_execution_stack.pop();
+                }
             };
             """
         )
@@ -88,13 +123,20 @@ class ModuleLoader:
 
         self._registered_modules.add(module_url)
         transformed_source, dependencies = self._transform(source, module_url)
-        self._context.eval(
-            "globalThis.__phantom_module_factories["
-            f"{json.dumps(module_url)}"
-            "] = function (exports, __require) {\n"
-            f"{transformed_source}\n"
-            "};"
-        )
+
+        try:
+            self._context.eval(
+                "globalThis.__phantom_module_factories["
+                f"{json.dumps(module_url)}"
+                "] = function (exports, __require) {\n"
+                f"{transformed_source}\n"
+                "};"
+            )
+        except JSRuntimeError as error:
+            message = f"Failed to compile module {module_url!r}: {error}"
+            if syntax_excerpt := self._find_untransformed_esm_syntax(transformed_source):
+                message += f"; unsupported ESM syntax near {syntax_excerpt!r}"
+            raise InterceptorError(message) from error
 
         for dependency_url in dependencies:
             if dependency_url not in self._registered_modules:
@@ -106,6 +148,14 @@ class ModuleLoader:
     def _transform(self, source: str, module_url: str) -> tuple[str, list[str]]:
         dependencies: list[str] = []
         exports: list[tuple[str, str]] = []
+
+        reexport_index = 0
+
+        def next_reexport_name() -> str:
+            nonlocal reexport_index
+            temporary_name = f"__phantom_reexport_{reexport_index}"
+            reexport_index += 1
+            return temporary_name
 
         def import_from(match: re.Match[str]) -> str:
             dependency_url = self._resolve_url(match.group("specifier"), module_url)
@@ -120,6 +170,41 @@ class ModuleLoader:
             return f"__require({json.dumps(dependency_url)});"
 
         source = self._IMPORT_SIDE_EFFECT_RE.sub(import_side_effect, source)
+
+        def export_from(match: re.Match[str]) -> str:
+            dependency_url = self._resolve_url(match.group("specifier"), module_url)
+            dependencies.append(dependency_url)
+            temporary_name = next_reexport_name()
+
+            lines = [
+                f"const {temporary_name} = __require({json.dumps(dependency_url)});"
+            ]
+
+            for binding in match.group("bindings").split(","):
+                imported_name, exported_name = self._parse_export_binding(binding)
+                lines.append(
+                    f"exports[{json.dumps(exported_name)}] = "
+                    f"{temporary_name}[{json.dumps(imported_name)}];"
+                )
+
+            return "\n".join(lines)
+
+        source = self._EXPORT_FROM_RE.sub(export_from, source)
+
+        def export_star_from(match: re.Match[str]) -> str:
+            dependency_url = self._resolve_url(match.group("specifier"), module_url)
+            dependencies.append(dependency_url)
+            temporary_name = next_reexport_name()
+            return (
+                f"const {temporary_name} = __require({json.dumps(dependency_url)});\n"
+                f"for (const exportName of Object.keys({temporary_name})) {{\n"
+                '    if (exportName !== "default") {\n'
+                f"        exports[exportName] = {temporary_name}[exportName];\n"
+                "    }\n"
+                "}"
+            )
+
+        source = self._EXPORT_STAR_FROM_RE.sub(export_star_from, source)
 
         def export_declaration(match: re.Match[str]) -> str:
             name = match.group("name")
@@ -234,6 +319,17 @@ class ModuleLoader:
         if port in {None, default_port}:
             return f"{scheme}://{host}"
         return f"{scheme}://{host}:{port}"
+
+    @classmethod
+    def _find_untransformed_esm_syntax(cls, source: str) -> str | None:
+        """Return a short diagnostic excerpt for remaining top-level ESM syntax."""
+        match = cls._UNTRANSFORMED_ESM_RE.search(source)
+        if match is None:
+            return None
+
+        start = match.start("keyword")
+        excerpt = source[start : start + 160]
+        return " ".join(excerpt.split())
 
     @classmethod
     def _require_identifier(cls, value: str, description: str) -> None:

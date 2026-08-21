@@ -226,6 +226,62 @@ if (typeof globalThis.console === "undefined") {
 }
 
 /**
+ * Image constructor polyfill
+ * ==========================
+ *
+ * Provides the lightweight DOM-facing part of the browser `Image`
+ * constructor. Calling `new Image()` creates a detached `<img>` element, so
+ * scripts can set `src`, dimensions, and other regular element attributes
+ * before inserting it into the document. This does not fetch or decode image
+ * resources and does not emulate `load` / `error` events.
+ */
+(function () {
+  function PhantomImage(width, height) {
+    const document = globalThis.document;
+    if (!document) {
+      throw new Error("Image is unavailable before a document is loaded");
+    }
+
+    const image = document.createElement("img");
+    if (arguments.length >= 1) {
+      image.setAttribute("width", String(width));
+    }
+    if (arguments.length >= 2) {
+      image.setAttribute("height", String(height));
+    }
+    return image;
+  }
+
+  globalThis.Image = PhantomImage;
+})();
+
+/**
+ * Performance polyfill
+ * ====================
+ *
+ * Supplies the small timing surface that page code commonly needs:
+ * `performance.timeOrigin` and `performance.now()`. The values are based on
+ * the JavaScript runtime's clock. Resource timing, navigation entries, and
+ * user-timing marks are intentionally outside this lightweight baseline.
+ */
+(function () {
+  const timeOrigin = Date.now();
+  const performance = {
+    timeOrigin: timeOrigin,
+    now: function () {
+      return Math.max(0, Date.now() - timeOrigin);
+    },
+  };
+
+  globalThis.performance = performance;
+  globalThis.__phantom_ensure_performance = function () {
+    if (globalThis.window) {
+      globalThis.window.performance = globalThis.performance;
+    }
+  };
+})();
+
+/**
  * URL and URLSearchParams polyfills
  * ================================
  *
