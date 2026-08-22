@@ -273,13 +273,13 @@ class _TestHandler(BaseHTTPRequestHandler):
             body = b"""
                 <html><body>
                     <script type="module">
-                        import { value as namedValue, setValue } from '../modules/live-binding-named-reexport.js';
-                        import { value as starValue } from '../modules/live-binding-star-reexport.js';
+                        import * as namedValues from '../modules/live-binding-named-reexport.js';
+                        import * as starValues from '../modules/live-binding-star-reexport.js';
                         import { aResult } from '../modules/live-cycle-a.js';
-                        setValue('after');
+                        namedValues.setValue('after');
                         document.body.setAttribute(
                             'live-binding-result',
-                            namedValue + ':' + starValue + ':' + aResult,
+                            namedValues.value + ':' + starValues.value + ':' + aResult,
                         );
                     </script>
                 </body></html>
@@ -608,8 +608,8 @@ class _TestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/modules/live-cycle-b.js":
             self._send(
                 200,
-                b'import { a } from "./live-cycle-a.js"; '
-                b'export function readA() { return a; }',
+                b'import * as aModule from "./live-cycle-a.js"; '
+                b'export function readA() { return aModule.a; }',
                 "text/javascript",
             )
             return
@@ -626,8 +626,8 @@ class _TestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/modules/live-tdz-b.js":
             self._send(
                 200,
-                b'import { a } from "./live-tdz-a.js"; '
-                b'export const b = a;',
+                b'import * as aModule from "./live-tdz-a.js"; '
+                b'export const b = aModule.a;',
                 "text/javascript",
             )
             return

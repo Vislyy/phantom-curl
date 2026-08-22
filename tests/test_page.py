@@ -573,7 +573,7 @@ def test_page_handles_common_static_module_export_forms_and_dependency_order(
 def test_page_keeps_supported_imports_and_exports_live_across_a_cycle(
     phantom_client, http_server: str
 ) -> None:
-    """Imports observe a later exported assignment and deferred cyclic read."""
+    """Namespace imports observe live exports and a deferred cyclic read."""
     page = phantom_client.new_page(f"{http_server}/live-binding-module-page/")
 
     assert page.body is not None

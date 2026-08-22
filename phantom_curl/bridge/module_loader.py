@@ -166,9 +166,7 @@ class ModuleLoader:
         dependencies: list[str] = []
         exports: list[tuple[str, str]] = []
         dependency_references: dict[str, str] = {}
-        dependency_declarations: list[str] = []
-        dependency_execution_prelude: list[str] = []
-        import_prelude: list[str] = []
+        dependency_prelude: list[str] = []
         module_prelude: list[str] = []
         post_dependency_prelude: list[str] = []
 
@@ -176,17 +174,14 @@ class ModuleLoader:
             """Return the per-factory variable holding one dependency's exports.
 
             Static ESM dependencies execute before the importing module's body.
-            The variable is declared before the module's export accessors, then
-            assigned after them. A cyclic importer can therefore see a live
-            export accessor (and its normal JavaScript TDZ error) instead of a
-            permanently copied ``undefined`` value.
+            One cached exports object is reused by every supported import form
+            in this factory.
             """
             if dependency_url not in dependency_references:
                 variable_name = f"__phantom_dependency_{len(dependency_references)}"
                 dependency_references[dependency_url] = variable_name
-                dependency_declarations.append(f"let {variable_name};")
-                dependency_execution_prelude.append(
-                    f"{variable_name} = __require({json.dumps(dependency_url)});"
+                dependency_prelude.append(
+                    f"const {variable_name} = __require({json.dumps(dependency_url)});"
                 )
             return dependency_references[dependency_url]
 
@@ -199,7 +194,7 @@ class ModuleLoader:
 
         def import_from(match: re.Match[str]) -> str:
             _, dependency_reference = add_dependency(match.group("specifier"))
-            import_prelude.extend(self._translate_import(match.group("clause"), dependency_reference))
+            module_prelude.extend(self._translate_import(match.group("clause"), dependency_reference))
             return ""
 
         source = self._IMPORT_FROM_RE.sub(import_from, source)
@@ -301,67 +296,40 @@ class ModuleLoader:
             self._property_getter("exports", export_name, local_name)
             for local_name, export_name in exports
         ]
-        module_body = "\n".join(
-            [
-                *export_prelude,
-                *module_prelude,
-                *dependency_execution_prelude,
-                *post_dependency_prelude,
-                source,
-            ]
-        )
-        indented_module_body = "\n".join(
-            f"    {line}" if line else "" for line in module_body.splitlines()
-        )
         transformed_source = "\n".join(
-            [
-                *dependency_declarations,
-                "const __phantom_imports = Object.create(null);",
-                *import_prelude,
-                "with (__phantom_imports) {",
-                indented_module_body,
-                "}",
-            ]
+            [*export_prelude, *dependency_prelude, *module_prelude, *post_dependency_prelude, source]
         )
         return transformed_source, dependencies
 
     def _translate_import(self, clause: str, dependency_reference: str) -> list[str]:
-        """Create module-local live accessors for one supported import clause."""
+        """Translate one import clause using an already-preloaded dependency."""
         clause = clause.strip()
 
         if clause.startswith("{") and clause.endswith("}"):
-            return self._translate_named_imports(clause, dependency_reference)
+            return [f"const {self._translate_named_imports(clause)} = {dependency_reference};"]
         if clause.startswith("* as "):
             namespace = clause.removeprefix("* as ").strip()
             self._require_identifier(namespace, "namespace import")
-            return [self._property_getter("__phantom_imports", namespace, dependency_reference)]
+            return [f"const {namespace} = {dependency_reference};"]
         if "," in clause:
             default_name, remainder = clause.split(",", 1)
             self._require_identifier(default_name.strip(), "default import")
             named_import = self._translate_import(remainder.strip(), dependency_reference)
             return [
-                self._property_getter(
-                    "__phantom_imports", default_name.strip(), f"{dependency_reference}.default"
-                ),
+                f"const {default_name.strip()} = {dependency_reference}.default;",
                 *named_import,
             ]
 
         self._require_identifier(clause, "default import")
-        return [self._property_getter("__phantom_imports", clause, f"{dependency_reference}.default")]
+        return [f"const {clause} = {dependency_reference}.default;"]
 
-    def _translate_named_imports(self, clause: str, dependency_reference: str) -> list[str]:
-        """Create live import accessors for a ``{ name as local }`` clause."""
+    def _translate_named_imports(self, clause: str) -> str:
+        """Translate a ``{ name as local }`` clause into object destructuring."""
         bindings: list[str] = []
         for binding in clause[1:-1].split(","):
             original_name, local_name = self._parse_import_binding(binding)
-            bindings.append(
-                self._property_getter(
-                    "__phantom_imports",
-                    local_name,
-                    f"{dependency_reference}[{json.dumps(original_name)}]",
-                )
-            )
-        return bindings
+            bindings.append(original_name if original_name == local_name else f"{original_name}: {local_name}")
+        return "{" + ", ".join(bindings) + "}"
 
     @staticmethod
     def _property_getter(target: str, property_name: str, expression: str) -> str:
