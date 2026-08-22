@@ -556,6 +556,42 @@ def test_page_loads_named_and_star_reexports(phantom_client, http_server: str) -
     assert page.script_errors == []
 
 
+def test_page_handles_common_static_module_export_forms_and_dependency_order(
+    phantom_client, http_server: str
+) -> None:
+    """Static dependencies run before module bodies and common exports remain importable."""
+    page = phantom_client.new_page(f"{http_server}/static-module-semantics-page/")
+
+    assert page.body is not None
+    assert page.body.get_attribute("static-module-semantics") == (
+        "named-default:function:anonymous-function:named-class:anonymous-class:namespace:"
+        "dependency-body>entry-body"
+    )
+    assert page.script_errors == []
+
+
+def test_page_keeps_supported_imports_and_exports_live_across_a_cycle(
+    phantom_client, http_server: str
+) -> None:
+    """Imports observe a later exported assignment and deferred cyclic read."""
+    page = phantom_client.new_page(f"{http_server}/live-binding-module-page/")
+
+    assert page.body is not None
+    assert page.body.get_attribute("live-binding-result") == "after:after:ready"
+    assert page.script_errors == []
+
+
+def test_page_reports_a_tdz_read_from_a_live_cyclic_binding(phantom_client, http_server: str) -> None:
+    """A real early cyclic read must fail instead of becoming a silent undefined."""
+    page = phantom_client.new_page(f"{http_server}/live-binding-tdz-page/")
+
+    assert len(page.script_errors) == 1
+    error = str(page.script_errors[0])
+    assert "live-tdz-a.js" in error
+    assert "live-tdz-b.js" in error
+    assert "a is not initialized" in error
+
+
 def test_page_reports_an_excerpt_for_unsupported_esm_syntax(phantom_client, http_server: str) -> None:
     page = phantom_client.new_page(f"{http_server}/unsupported-module-page/")
 
@@ -563,7 +599,7 @@ def test_page_reports_an_excerpt_for_unsupported_esm_syntax(phantom_client, http
     error = str(page.script_errors[0])
     assert "unsupported-export.js" in error
     assert "unsupported ESM syntax near" in error
-    assert "export async function load()" in error
+    assert "export async function* load()" in error
 
 
 def test_page_reports_the_module_execution_error_load_chain(phantom_client, http_server: str) -> None:
@@ -586,6 +622,217 @@ def test_page_follows_a_navigation_queued_by_location_href(phantom_client, http_
     assert page.body is not None
     assert page.body.get_attribute("data-navigation-target") == "yes"
     assert page.script_errors == []
+
+
+def test_page_follows_a_navigation_queued_by_location_replace(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/replace-navigation/")
+
+    assert page.url == f"{http_server}/navigation-target/"
+    assert page.body is not None
+    assert page.body.get_attribute("data-navigation-target") == "yes"
+
+
+def test_page_eval_automatically_follows_a_queued_location_navigation(
+    phantom_client, http_server: str
+) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    page.eval("location.assign('/navigation-target/');")
+
+    assert page.url == f"{http_server}/navigation-target/"
+    assert page.body is not None
+    assert page.body.get_attribute("data-navigation-target") == "yes"
+
+
+def test_page_history_changes_spa_routes_without_a_document_navigation(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    result = json.loads(
+        page.eval(
+            """
+            const popStates = [];
+            window.addEventListener('popstate', function (event) {
+                popStates.push(event.state);
+            });
+
+            const initialUrl = location.href;
+            const sourceState = {route: 'search'};
+            history.pushState(sourceState, '', '/search?query=phantom#result');
+            sourceState.route = 'changed-after-push';
+            const copiedState = history.state.route;
+
+            history.replaceState({route: 'results', page: 2}, '', '/results?page=2');
+            history.back();
+            history.forward();
+
+            JSON.stringify({
+                initialUrl: initialUrl,
+                href: location.href,
+                pathname: location.pathname,
+                search: location.search,
+                hash: location.hash,
+                length: history.length,
+                state: history.state,
+                copiedState: copiedState,
+                popStates: popStates,
+                hasWindowHistory: window.history === history,
+            });
+            """
+        )
+    )
+
+    assert result == {
+        "initialUrl": f"{http_server}/page/",
+        "href": f"{http_server}/results?page=2",
+        "pathname": "/results",
+        "search": "?page=2",
+        "hash": "",
+        "length": 2,
+        "state": {"route": "results", "page": 2},
+        "copiedState": "search",
+        "popStates": [None, {"route": "results", "page": 2}],
+        "hasWindowHistory": True,
+    }
+    assert page.url == f"{http_server}/page/"
+
+
+def test_page_history_rejects_cross_origin_routes(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/page/")
+
+    result = json.loads(
+        page.eval(
+            """
+            let error = null;
+            try {
+                history.pushState({route: 'blocked'}, '', 'https://example.com/other');
+            } catch (caught) {
+                error = String(caught);
+            }
+            JSON.stringify({
+                href: location.href,
+                length: history.length,
+                state: history.state,
+                error: error,
+            });
+            """
+        )
+    )
+
+    assert result == {
+        "href": f"{http_server}/page/",
+        "length": 1,
+        "state": None,
+        "error": "Error: PhantomCurl history only permits same-origin URLs",
+    }
+
+
+def test_page_click_follows_a_regular_anchor_link(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/anchor-page/")
+
+    link = page.query_selector("#regular-link")
+    assert link is not None
+    link.click()
+
+    assert page.url == f"{http_server}/navigation-target/"
+    assert page.body is not None
+    assert page.body.get_attribute("data-navigation-target") == "yes"
+
+
+def test_page_click_does_not_follow_a_prevented_anchor_link(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/anchor-page/")
+
+    link = page.query_selector("#prevented-link")
+    assert link is not None
+    link.click()
+
+    assert page.url == f"{http_server}/anchor-page/"
+    assert page.body is not None
+    assert page.body.get_attribute("prevented-click-ran") == "yes"
+
+
+def test_page_click_does_not_follow_an_anchor_for_another_context(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/anchor-page/")
+
+    link = page.query_selector("#new-context-link")
+    assert link is not None
+    link.click()
+
+    assert page.url == f"{http_server}/anchor-page/"
+
+
+def test_page_click_submits_a_supported_get_form(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/get-form-page/")
+
+    query = page.query_selector("#query-input")
+    submit = page.query_selector("#search-submit")
+    assert query is not None
+    assert submit is not None
+
+    query.type("phantom curl")
+    submit.click()
+
+    assert page.url == f"{http_server}/form-target/?query=phantom+curl&featured=yes"
+    assert page.body is not None
+    assert page.body.get_attribute("data-query") == "phantom curl"
+    assert page.body.get_attribute("data-featured") == "yes"
+
+
+def test_page_click_does_not_submit_a_prevented_form(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/get-form-page/")
+
+    submit = page.query_selector("#prevented-submit")
+    assert submit is not None
+    submit.click()
+
+    assert page.url == f"{http_server}/get-form-page/"
+    assert page.body is not None
+    assert page.body.get_attribute("prevented-submit-ran") == "yes"
+
+
+def test_page_click_toggles_checkbox_and_dispatches_control_events(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/form-controls-page/")
+
+    checkbox = page.query_selector("#feature-toggle")
+    assert checkbox is not None
+    assert page.eval("document.querySelector('#feature-toggle').checked") is True
+
+    checkbox.click()
+
+    assert page.eval("document.querySelector('#feature-toggle').checked") is False
+    assert page.body is not None
+    assert page.body.get_attribute("checkbox-input") == "false"
+    assert page.body.get_attribute("checkbox-change") == "false"
+
+
+def test_page_click_selects_a_radio_and_clears_its_group(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/form-controls-page/")
+
+    second_option = page.query_selector("#second-option")
+    assert second_option is not None
+    second_option.click()
+
+    assert page.eval("document.querySelector('#first-option').checked") is False
+    assert page.eval("document.querySelector('#second-option').checked") is True
+
+
+def test_page_click_does_not_toggle_a_prevented_checkbox(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/form-controls-page/")
+
+    checkbox = page.query_selector("#prevented-toggle")
+    assert checkbox is not None
+    checkbox.click()
+
+    assert page.eval("document.querySelector('#prevented-toggle').checked") is True
+
+
+def test_page_dispatches_document_lifecycle_events_in_order(phantom_client, http_server: str) -> None:
+    page = phantom_client.new_page(f"{http_server}/document-lifecycle-page/")
+
+    assert page.body is not None
+    assert page.body.get_attribute("state-during-script") == "loading"
+    assert page.body.get_attribute("state-during-dom-content-loaded") == "interactive"
+    assert page.body.get_attribute("state-during-window-load") == "complete"
+    assert page.eval("document.readyState") == "complete"
 
 
 def test_page_loads_minified_static_module_imports(phantom_client, http_server: str) -> None:

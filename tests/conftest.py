@@ -246,6 +246,56 @@ class _TestHandler(BaseHTTPRequestHandler):
             self._send(200, body, "text/html")
             return
 
+        if parsed.path == "/static-module-semantics-page/":
+            body = b"""
+                <html><body>
+                    <script>globalThis.__phantom_evaluation_order = [];</script>
+                    <script type="module">
+                        import namedDefault, { load } from '../modules/default-exports.js';
+                        import anonymousFunction from '../modules/default-anonymous-function.js';
+                        import NamedDefaultClass from '../modules/default-class.js';
+                        import AnonymousDefaultClass from '../modules/default-anonymous-class.js';
+                        import { values } from '../modules/namespace-reexport-entry.js';
+                        import { executionOrder } from '../modules/evaluation-order-entry.js';
+                        document.body.setAttribute(
+                            'static-module-semantics',
+                            namedDefault() + ':' + typeof load + ':' + anonymousFunction()
+                                + ':' + new NamedDefaultClass().label + ':' + new AnonymousDefaultClass().label
+                                + ':' + values.first + ':' + executionOrder,
+                        );
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/live-binding-module-page/":
+            body = b"""
+                <html><body>
+                    <script type="module">
+                        import { value as namedValue, setValue } from '../modules/live-binding-named-reexport.js';
+                        import { value as starValue } from '../modules/live-binding-star-reexport.js';
+                        import { aResult } from '../modules/live-cycle-a.js';
+                        setValue('after');
+                        document.body.setAttribute(
+                            'live-binding-result',
+                            namedValue + ':' + starValue + ':' + aResult,
+                        );
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/live-binding-tdz-page/":
+            body = b"""
+                <html><body>
+                    <script type="module" src="../modules/live-tdz-a.js"></script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
         if parsed.path == "/unsupported-module-page/":
             body = b"""
                 <html><body>
@@ -277,12 +327,111 @@ class _TestHandler(BaseHTTPRequestHandler):
             self._send(200, body, "text/html")
             return
 
+        if parsed.path == "/replace-navigation/":
+            body = b"""
+                <html><body>
+                    <script>location.replace('/navigation-target/');</script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
         if parsed.path == "/navigation-target/":
             self._send(
                 200,
                 b'<html><body data-navigation-target="yes">Arrived</body></html>',
                 "text/html",
             )
+            return
+
+        if parsed.path == "/anchor-page/":
+            body = b"""
+                <html><body>
+                    <a id="regular-link" href="/navigation-target/">Regular</a>
+                    <a id="prevented-link" href="/navigation-target/">Prevented</a>
+                    <a id="new-context-link" href="/navigation-target/" target="_blank">New context</a>
+                    <script>
+                        document.querySelector('#prevented-link').addEventListener('click', function (event) {
+                            event.preventDefault();
+                            document.body.setAttribute('prevented-click-ran', 'yes');
+                        });
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/get-form-page/":
+            body = b"""
+                <html><body>
+                    <form id="search-form" action="/form-target/?old=value" method="get">
+                        <input id="query-input" name="query" value="initial">
+                        <input id="featured-input" type="checkbox" name="featured" value="yes" checked>
+                        <button id="search-submit" type="submit">Search</button>
+                    </form>
+                    <form id="prevented-form" action="/form-target/" method="get">
+                        <input name="query" value="blocked">
+                        <button id="prevented-submit" type="submit">Prevented</button>
+                    </form>
+                    <script>
+                        document.querySelector('#prevented-form').addEventListener('submit', function (event) {
+                            event.preventDefault();
+                            document.body.setAttribute('prevented-submit-ran', 'yes');
+                        });
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/form-controls-page/":
+            body = b"""
+                <html><body>
+                    <input id="feature-toggle" type="checkbox" name="feature" checked>
+                    <input id="prevented-toggle" type="checkbox" name="prevented" checked>
+                    <input id="first-option" type="radio" name="option" value="first" checked>
+                    <input id="second-option" type="radio" name="option" value="second">
+                    <script>
+                        const checkbox = document.querySelector('#feature-toggle');
+                        checkbox.addEventListener('input', function () {
+                            document.body.setAttribute('checkbox-input', String(checkbox.checked));
+                        });
+                        checkbox.addEventListener('change', function () {
+                            document.body.setAttribute('checkbox-change', String(checkbox.checked));
+                        });
+                        document.querySelector('#prevented-toggle').addEventListener('click', function (event) {
+                            event.preventDefault();
+                        });
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/document-lifecycle-page/":
+            body = b"""
+                <html><body>
+                    <script>
+                        document.body.setAttribute('state-during-script', document.readyState);
+                        document.addEventListener('DOMContentLoaded', function () {
+                            document.body.setAttribute('state-during-dom-content-loaded', document.readyState);
+                        });
+                        window.addEventListener('load', function () {
+                            document.body.setAttribute('state-during-window-load', document.readyState);
+                        });
+                    </script>
+                </body></html>
+            """
+            self._send(200, body, "text/html")
+            return
+
+        if parsed.path == "/form-target/":
+            query = parse_qs(parsed.query).get("query", [""])[0]
+            featured = parse_qs(parsed.query).get("featured", [""])[0]
+            body = (
+                f'<html><body data-query="{query}" data-featured="{featured}">Submitted</body></html>'
+            ).encode()
+            self._send(200, body, "text/html")
             return
 
         if parsed.path == "/modules/math.js":
@@ -358,10 +507,135 @@ class _TestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/modules/default-exports.js":
+            self._send(
+                200,
+                b'export default function namedDefault() { return "named-default"; } '
+                b'export async function load() { return "async"; }',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/default-anonymous-function.js":
+            self._send(
+                200,
+                b'export default function () { return "anonymous-function"; }',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/default-class.js":
+            self._send(
+                200,
+                b'export default class NamedDefaultClass { constructor() { this.label = "named-class"; } }',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/default-anonymous-class.js":
+            self._send(
+                200,
+                b'export default class { constructor() { this.label = "anonymous-class"; } }',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/namespace-reexport-entry.js":
+            self._send(
+                200,
+                b'export*as values from "./namespace-reexport-source.js";',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/namespace-reexport-source.js":
+            self._send(200, b'export const first = "namespace";', "text/javascript")
+            return
+
+        if parsed.path == "/modules/evaluation-order-entry.js":
+            self._send(
+                200,
+                b'globalThis.__phantom_evaluation_order.push("entry-body"); '
+                b'import "./evaluation-order-dependency.js"; '
+                b'export const executionOrder = globalThis.__phantom_evaluation_order.join(">");',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/evaluation-order-dependency.js":
+            self._send(
+                200,
+                b'globalThis.__phantom_evaluation_order.push("dependency-body");',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/live-binding-source.js":
+            self._send(
+                200,
+                b'export let value = "before"; '
+                b'export function setValue(next) { value = next; }',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/live-binding-named-reexport.js":
+            self._send(
+                200,
+                b'export { value, setValue } from "./live-binding-source.js";',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/live-binding-star-reexport.js":
+            self._send(
+                200,
+                b'export * from "./live-binding-source.js";',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/live-cycle-a.js":
+            self._send(
+                200,
+                b'import { readA } from "./live-cycle-b.js"; '
+                b'export const a = "ready"; '
+                b'export const aResult = readA();',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/live-cycle-b.js":
+            self._send(
+                200,
+                b'import { a } from "./live-cycle-a.js"; '
+                b'export function readA() { return a; }',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/live-tdz-a.js":
+            self._send(
+                200,
+                b'import "./live-tdz-b.js"; '
+                b'export const a = "ready";',
+                "text/javascript",
+            )
+            return
+
+        if parsed.path == "/modules/live-tdz-b.js":
+            self._send(
+                200,
+                b'import { a } from "./live-tdz-a.js"; '
+                b'export const b = a;',
+                "text/javascript",
+            )
+            return
+
         if parsed.path == "/modules/unsupported-export.js":
             self._send(
                 200,
-                b"export async function load() { return 'not supported yet'; }",
+                b"export async function* load() { yield 'not supported yet'; }",
                 "text/javascript",
             )
             return

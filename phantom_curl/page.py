@@ -59,6 +59,7 @@ class Page:
         "application/ecmascript",
         "application/x-javascript",
     })
+    _MAX_AUTOMATIC_NAVIGATIONS: ClassVar[int] = 10
 
     def __init__(self, session: NetworkSession, origin_policy: Optional[OriginPolicy] = None):
         """
@@ -87,6 +88,7 @@ class Page:
         self._fetch_interceptor: Optional[FetchInterceptor] = None
         self._module_loader: Optional[ModuleLoader] = None
         self._timer_bridge: Optional[TimerBridge] = None
+        self._automatic_navigation_depth = 0
         self._reset_runtime()
 
         self._generation = 0
@@ -537,6 +539,24 @@ class Page:
             const locationObject = globalThis.location;
             let currentHref = locationObject.href;
 
+            globalThis.__phantom_set_location_for_history = function (value) {
+                const nextLocation = new URL(String(value), currentHref);
+                if (nextLocation.origin !== locationObject.origin) {
+                    throw new Error('PhantomCurl history only permits same-origin URLs');
+                }
+
+                currentHref = nextLocation.href;
+                locationObject.origin = nextLocation.origin;
+                locationObject.protocol = nextLocation.protocol;
+                locationObject.host = nextLocation.host;
+                locationObject.hostname = nextLocation.hostname;
+                locationObject.port = nextLocation.port;
+                locationObject.pathname = nextLocation.pathname;
+                locationObject.search = nextLocation.search;
+                locationObject.hash = nextLocation.hash;
+                return currentHref;
+            };
+
             Object.defineProperty(locationObject, "href", {
                 configurable: true,
                 enumerable: true,
@@ -551,9 +571,145 @@ class Page:
 
             locationObject.assign = function (value) {
                 locationObject.href = value;
+            };
+            locationObject.replace = function (value) {
+                locationObject.href = value;
+            };
+            """
+        )
+
+    def _install_history_bridge(self) -> None:
+        """Install the JSON-state subset of the History API for SPA routing."""
+        self._context.eval(
+            """
+            function cloneHistoryState(state) {
+                if (state === undefined) {
+                    return null;
+                }
+
+                const serialized = JSON.stringify(state);
+                if (serialized === undefined) {
+                    throw new TypeError('PhantomCurl history state must be JSON-serializable');
+                }
+                return JSON.parse(serialized);
+            }
+
+            const historyEntries = [{
+                state: null,
+                url: globalThis.location.href,
+            }];
+            let historyIndex = 0;
+            const historyObject = {
+                pushState: function (state, unused, url) {
+                    const nextState = cloneHistoryState(state);
+                    const nextUrl = arguments.length < 3 || url === undefined
+                        ? globalThis.location.href
+                        : globalThis.__phantom_set_location_for_history(url);
+
+                    historyEntries.splice(historyIndex + 1);
+                    historyEntries.push({state: nextState, url: nextUrl});
+                    historyIndex = historyEntries.length - 1;
+                },
+                replaceState: function (state, unused, url) {
+                    const nextState = cloneHistoryState(state);
+                    const nextUrl = arguments.length < 3 || url === undefined
+                        ? globalThis.location.href
+                        : globalThis.__phantom_set_location_for_history(url);
+
+                    historyEntries[historyIndex] = {state: nextState, url: nextUrl};
+                },
+                go: function (delta) {
+                    const numericDelta = delta === undefined ? 0 : Number(delta);
+                    if (!Number.isFinite(numericDelta)) {
+                        return;
+                    }
+
+                    const nextIndex = historyIndex + Math.trunc(numericDelta);
+                    if (nextIndex < 0 || nextIndex >= historyEntries.length || nextIndex === historyIndex) {
+                        return;
+                    }
+
+                    historyIndex = nextIndex;
+                    const entry = historyEntries[historyIndex];
+                    globalThis.__phantom_set_location_for_history(entry.url);
+
+                    const event = new globalThis.window.Event('popstate');
+                    event.state = cloneHistoryState(entry.state);
+                    globalThis.window.dispatchEvent(event);
+                },
+                back: function () {
+                    this.go(-1);
+                },
+                forward: function () {
+                    this.go(1);
+                },
+            };
+
+            Object.defineProperty(historyObject, 'length', {
+                enumerable: true,
+                get: function () {
+                    return historyEntries.length;
+                },
+            });
+            Object.defineProperty(historyObject, 'state', {
+                enumerable: true,
+                get: function () {
+                    return cloneHistoryState(historyEntries[historyIndex].state);
+                },
+            });
+
+            globalThis.history = historyObject;
+            globalThis.window.history = historyObject;
+            """
+        )
+
+    def _initialize_form_control_defaults(self) -> None:
+        """Synchronize parsed checked attributes with Linkedom control properties."""
+        self._context.eval(
+            """
+            for (const control of globalThis.document.querySelectorAll('input')) {
+                const type = String(control.getAttribute('type') || '').toLowerCase();
+                if ((type === 'checkbox' || type === 'radio') && control.hasAttribute('checked')) {
+                    control.checked = true;
+                }
             }
             """
         )
+
+    def _install_document_lifecycle(self) -> None:
+        """Install page-load events and the matching document.readyState values."""
+        self._context.eval(
+            """
+            let phantomDocumentReadyState = 'loading';
+            Object.defineProperty(globalThis.document, 'readyState', {
+                configurable: true,
+                enumerable: true,
+                get: function () {
+                    return phantomDocumentReadyState;
+                },
+            });
+
+            globalThis.__phantom_fire_dom_content_loaded = function () {
+                phantomDocumentReadyState = 'interactive';
+                globalThis.document.dispatchEvent(
+                    new globalThis.window.Event('DOMContentLoaded')
+                );
+            };
+            globalThis.__phantom_fire_window_load = function () {
+                phantomDocumentReadyState = 'complete';
+                globalThis.window.dispatchEvent(new globalThis.window.Event('load'));
+            };
+            """
+        )
+
+    def _finish_document_loading(self) -> None:
+        """Dispatch the supported document lifecycle events after page scripts."""
+        self._context.eval("globalThis.__phantom_fire_dom_content_loaded();")
+        self._drain_runtime()
+        self._execute_pending_scripts()
+        self._context.eval("globalThis.__phantom_fire_window_load();")
+        self._drain_runtime()
+        self._execute_pending_scripts()
 
     def _install_cookie_bridge(self) -> None:
         """Expose the page-visible portion of the session cookie jar to JavaScript."""
@@ -775,6 +931,26 @@ class Page:
 
         return None
 
+    def _follow_queued_navigation(self) -> Optional[Response]:
+        """Follow one queued JS navigation after the current JS work is stable."""
+        target_url = self._take_pending_navigations()
+        if target_url is None:
+            return None
+
+        if self._automatic_navigation_depth >= self._MAX_AUTOMATIC_NAVIGATIONS:
+            error = InterceptorError(
+                f"Stopped after {self._MAX_AUTOMATIC_NAVIGATIONS} automatic navigations"
+            )
+            logger.warning("%s on %s", error, self.url)
+            self.script_errors.append(error)
+            return None
+
+        self._automatic_navigation_depth += 1
+        try:
+            return self.goto(target_url)
+        finally:
+            self._automatic_navigation_depth -= 1
+
     def _drain_runtime(self, timeout: float = 0.0) -> None:
         """Run microtasks, queued fetches and timers due within ``timeout`` seconds."""
         deadline = time.monotonic() + timeout
@@ -941,6 +1117,9 @@ class Page:
 
         self._install_cookie_bridge()
         self._install_navigation_bridge()
+        self._install_history_bridge()
+        self._initialize_form_control_defaults()
+        self._install_document_lifecycle()
         self._install_local_storage_bridge()
         self._install_fetch_bridge()
         self._install_xhr_bridge()
@@ -953,9 +1132,11 @@ class Page:
         self.script_errors = []
 
         self._execute_pending_scripts()
+        self._finish_document_loading()
 
         self.response = response
-        return response
+        followed_response = self._follow_queued_navigation()
+        return response if followed_response is None else followed_response
 
     def content(self) -> str:
         return self.html
@@ -1009,6 +1190,8 @@ class Page:
         """Evaluate JavaScript in the current page context."""
         result = self._context.eval(js_code)
         self._drain_runtime()
+        self._execute_pending_scripts()
+        self._follow_queued_navigation()
         return result
 
     def run_event_loop(self, timeout: float = 0.0) -> None:
@@ -1017,10 +1200,7 @@ class Page:
             raise ValueError("timeout must be non-negative")
         self._drain_runtime(timeout)
         self._execute_pending_scripts()
-
-        target_url = self._take_pending_navigations()
-        if target_url is not None:
-            self.goto(target_url)
+        self._follow_queued_navigation()
 
     def eval(self, js_code: str) -> Any:
         """Alias for :meth:`evaluate`, retained for a concise interactive API."""

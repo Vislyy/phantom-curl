@@ -187,25 +187,169 @@ class Element:
     @_ensure_valid
     def click(self) -> None:
         """
-        Simulates a mouse click on this element by executing its `click()`
-        method or dispatching a click MouseEvent, then drains immediate page
-        tasks queued by the event handler.
+        Simulates a mouse click, applies the supported anchor default action,
+        then drains immediate page tasks queued by the event handler.
+
+        A normal click on an `<a href>` queues a same-page navigation after
+        event handlers run. A handler can cancel that navigation with
+        `event.preventDefault()`. The same applies to the supported GET-form
+        submission default action. Links targeting another browsing context,
+        downloads, and unsupported form modes are left to the caller.
         """
         js = f"""
         (function() {{
             const elem = globalThis.__phantom_elements[{self._handle_id!r}];
             if (!elem) return;
 
-            if (typeof elem.click === 'function') {{
-                elem.click();
-            }} else {{
-                const win = (elem.ownerDocument && elem.ownerDocument.defaultView) || globalThis;
-                const EventCtor = win.MouseEvent || win.Event || globalThis.Event;
-                if (EventCtor) {{
-                    const evt = new EventCtor('click', {{ bubbles: true, cancelable: true }});
-                    elem.dispatchEvent(evt);
+            const win = (elem.ownerDocument && elem.ownerDocument.defaultView) || globalThis;
+            const EventCtor = win.MouseEvent || win.Event || globalThis.Event;
+            if (!EventCtor) return;
+
+            const event = new EventCtor('click', {{ bubbles: true, cancelable: true }});
+            const wasHandled = elem.dispatchEvent(event);
+            if (!wasHandled || event.defaultPrevented) return;
+
+            const closestForm = function (node) {{
+                let current = node;
+                while (current && current.nodeType === 1) {{
+                    if (String(current.tagName).toLowerCase() === 'form') {{
+                        return current;
+                    }}
+                    current = current.parentElement;
+                }}
+                return null;
+            }};
+            const setChecked = function (control, value) {{
+                control.checked = value;
+                if (value) {{
+                    control.setAttribute('checked', '');
+                }} else {{
+                    control.removeAttribute('checked');
+                }}
+            }};
+            const elementTag = String(elem.tagName).toLowerCase();
+            const elementType = String(elem.getAttribute('type') || '').toLowerCase();
+            if (elementTag === 'input' && (elementType === 'checkbox' || elementType === 'radio')) {{
+                const wasChecked = Boolean(elem.checked) || elem.hasAttribute('checked');
+                if (elementType === 'checkbox') {{
+                    setChecked(elem, !wasChecked);
+                }} else if (!wasChecked) {{
+                    const groupName = elem.getAttribute('name');
+                    const form = closestForm(elem);
+                    if (groupName) {{
+                        for (const candidate of elem.ownerDocument.querySelectorAll('input')) {{
+                            const candidateType = String(candidate.getAttribute('type') || '').toLowerCase();
+                            if (
+                                candidate !== elem
+                                && candidateType === 'radio'
+                                && candidate.getAttribute('name') === groupName
+                                && closestForm(candidate) === form
+                            ) {{
+                                setChecked(candidate, false);
+                            }}
+                        }}
+                    }}
+                    setChecked(elem, true);
+                }}
+
+                if (Boolean(elem.checked) !== wasChecked) {{
+                    elem.dispatchEvent(new EventCtor('input', {{ bubbles: true }}));
+                    elem.dispatchEvent(new EventCtor('change', {{ bubbles: true }}));
                 }}
             }}
+
+            let anchor = elem;
+            while (anchor && anchor.nodeType === 1) {{
+                if (String(anchor.tagName).toLowerCase() === 'a') {{
+                    break;
+                }}
+                anchor = anchor.parentElement;
+            }}
+
+            if (anchor) {{
+                if (!anchor.hasAttribute('href') || anchor.hasAttribute('download')) {{
+                    return;
+                }}
+
+                const target = anchor.getAttribute('target');
+                if (target && target.toLowerCase() !== '_self') {{
+                    return;
+                }}
+
+                globalThis.location.href = anchor.getAttribute('href');
+                return;
+            }}
+
+            let submitter = elem;
+            while (submitter && submitter.nodeType === 1) {{
+                const tagName = String(submitter.tagName).toLowerCase();
+                const type = String(submitter.getAttribute('type') || '').toLowerCase();
+                const isSubmitButton = tagName === 'button' && (type === '' || type === 'submit');
+                const isSubmitInput = tagName === 'input' && (type === 'submit' || type === 'image');
+                if (isSubmitButton || isSubmitInput) {{
+                    break;
+                }}
+                submitter = submitter.parentElement;
+            }}
+
+            if (!submitter) {{
+                return;
+            }}
+
+            const form = closestForm(submitter);
+            if (!form) {{
+                return;
+            }}
+
+            const submitEvent = new EventCtor('submit', {{ bubbles: true, cancelable: true }});
+            const wasSubmitted = form.dispatchEvent(submitEvent);
+            if (!wasSubmitted || submitEvent.defaultPrevented) {{
+                return;
+            }}
+
+            const formTarget = submitter.getAttribute('formtarget') || form.getAttribute('target');
+            if (formTarget && formTarget.toLowerCase() !== '_self') {{
+                return;
+            }}
+
+            const method = String(
+                submitter.getAttribute('formmethod') || form.getAttribute('method') || 'get'
+            ).toLowerCase();
+            if (method !== 'get') {{
+                return;
+            }}
+
+            const formAction = submitter.getAttribute('formaction') || form.getAttribute('action') || location.href;
+            const targetUrl = new URL(formAction, location.href);
+            const parameters = new URLSearchParams();
+            const controls = form.querySelectorAll('[name]');
+            for (let index = 0; index < controls.length; index += 1) {{
+                const control = controls[index];
+                if (control.hasAttribute('disabled')) {{
+                    continue;
+                }}
+
+                const controlTag = String(control.tagName).toLowerCase();
+                const controlType = String(control.getAttribute('type') || '').toLowerCase();
+                if (
+                    (controlTag === 'button' || controlType === 'submit' || controlType === 'image')
+                    && control !== submitter
+                ) {{
+                    continue;
+                }}
+                if (controlType === 'button' || controlType === 'reset' || controlType === 'file') {{
+                    continue;
+                }}
+                const isChecked = Boolean(control.checked) || control.hasAttribute('checked');
+                if ((controlType === 'checkbox' || controlType === 'radio') && !isChecked) {{
+                    continue;
+                }}
+
+                parameters.append(control.getAttribute('name'), String(control.value || ''));
+            }}
+
+            targetUrl.search = parameters.toString() ? '?' + parameters.toString() : '';
+            globalThis.location.href = targetUrl.href;
         }})()
         """
         self._context.eval(js)

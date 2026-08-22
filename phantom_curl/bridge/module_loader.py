@@ -17,15 +17,15 @@ class ModuleLoader:
     """Load and execute supported static JavaScript modules for one page."""
 
     _IMPORT_FROM_RE = re.compile(
-        r"(?:^|(?<=;))\s*import\s*(?P<clause>[^;\n]+?)\s*from\s*(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
+        r"(?:^|(?<=[;}]))\s*import\s*(?P<clause>[^;\n]+?)\s*from\s*(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
         re.MULTILINE,
     )
     _IMPORT_SIDE_EFFECT_RE = re.compile(
-        r"(?:^|(?<=;))\s*import\s*(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
+        r"(?:^|(?<=[;}]))\s*import\s*(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
         re.MULTILINE,
     )
     _EXPORT_DECLARATION_RE = re.compile(
-        r"(?:^|(?<=[;}]))\s*export\s+(?P<kind>const|let|var|function|class)\s+(?P<name>[A-Za-z_$][\w$]*)",
+        r"(?:^|(?<=[;}]))\s*export\s+(?P<kind>const|let|var|(?:async\s+)?function|class)\s+(?P<name>[A-Za-z_$][\w$]*)",
         re.MULTILINE,
     )
     _EXPORT_FROM_RE = re.compile(
@@ -36,7 +36,24 @@ class ModuleLoader:
         r"(?:^|(?<=[;}]))\s*export\s*\*\s*from\s*(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
         re.MULTILINE,
     )
+    _EXPORT_STAR_AS_NAMESPACE_FROM_RE = re.compile(
+        r"(?:^|(?<=[;}]))\s*export\s*\*\s*as\s*(?P<name>[A-Za-z_$][\w$]*)\s*from\s*"
+        r"(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?",
+        re.MULTILINE,
+    )
     _EXPORT_LIST_RE = re.compile(r"(?:^|(?<=[;}]))\s*export\s*\{(?P<bindings>[^}]+)\}\s*;?", re.MULTILINE)
+    _EXPORT_DEFAULT_NAMED_DECLARATION_RE = re.compile(
+        r"(?:^|(?<=[;}]))\s*export\s+default\s+(?P<kind>(?:async\s+)?function|class)\s+"
+        r"(?P<name>[A-Za-z_$][\w$]*)",
+        re.MULTILINE,
+    )
+    _EXPORT_DEFAULT_ANONYMOUS_FUNCTION_RE = re.compile(
+        r"(?:^|(?<=[;}]))\s*export\s+default\s+(?P<async>async\s+)?function(?=\s*\()",
+        re.MULTILINE,
+    )
+    _EXPORT_DEFAULT_ANONYMOUS_CLASS_RE = re.compile(
+        r"(?:^|(?<=[;}]))\s*export\s+default\s+class(?=\s*\{)", re.MULTILINE
+    )
     _EXPORT_DEFAULT_RE = re.compile(
         r"(?:^|(?<=[;}]))\s*export\s+default\s+(?P<expression>[^;\n]+);?", re.MULTILINE
     )
@@ -148,63 +165,116 @@ class ModuleLoader:
     def _transform(self, source: str, module_url: str) -> tuple[str, list[str]]:
         dependencies: list[str] = []
         exports: list[tuple[str, str]] = []
+        dependency_references: dict[str, str] = {}
+        dependency_declarations: list[str] = []
+        dependency_execution_prelude: list[str] = []
+        import_prelude: list[str] = []
+        module_prelude: list[str] = []
+        post_dependency_prelude: list[str] = []
 
-        reexport_index = 0
+        def require_dependency(dependency_url: str) -> str:
+            """Return the per-factory variable holding one dependency's exports.
 
-        def next_reexport_name() -> str:
-            nonlocal reexport_index
-            temporary_name = f"__phantom_reexport_{reexport_index}"
-            reexport_index += 1
-            return temporary_name
+            Static ESM dependencies execute before the importing module's body.
+            The variable is declared before the module's export accessors, then
+            assigned after them. A cyclic importer can therefore see a live
+            export accessor (and its normal JavaScript TDZ error) instead of a
+            permanently copied ``undefined`` value.
+            """
+            if dependency_url not in dependency_references:
+                variable_name = f"__phantom_dependency_{len(dependency_references)}"
+                dependency_references[dependency_url] = variable_name
+                dependency_declarations.append(f"let {variable_name};")
+                dependency_execution_prelude.append(
+                    f"{variable_name} = __require({json.dumps(dependency_url)});"
+                )
+            return dependency_references[dependency_url]
+
+        def add_dependency(specifier: str) -> tuple[str, str]:
+            """Resolve a specifier and return its URL plus preloaded reference."""
+            dependency_url = self._resolve_url(specifier, module_url)
+            if dependency_url not in dependencies:
+                dependencies.append(dependency_url)
+            return dependency_url, require_dependency(dependency_url)
 
         def import_from(match: re.Match[str]) -> str:
-            dependency_url = self._resolve_url(match.group("specifier"), module_url)
-            dependencies.append(dependency_url)
-            return self._translate_import(match.group("clause"), dependency_url)
+            _, dependency_reference = add_dependency(match.group("specifier"))
+            import_prelude.extend(self._translate_import(match.group("clause"), dependency_reference))
+            return ""
 
         source = self._IMPORT_FROM_RE.sub(import_from, source)
 
         def import_side_effect(match: re.Match[str]) -> str:
-            dependency_url = self._resolve_url(match.group("specifier"), module_url)
-            dependencies.append(dependency_url)
-            return f"__require({json.dumps(dependency_url)});"
+            add_dependency(match.group("specifier"))
+            return ""
 
         source = self._IMPORT_SIDE_EFFECT_RE.sub(import_side_effect, source)
 
         def export_from(match: re.Match[str]) -> str:
-            dependency_url = self._resolve_url(match.group("specifier"), module_url)
-            dependencies.append(dependency_url)
-            temporary_name = next_reexport_name()
-
-            lines = [
-                f"const {temporary_name} = __require({json.dumps(dependency_url)});"
-            ]
+            _, dependency_reference = add_dependency(match.group("specifier"))
 
             for binding in match.group("bindings").split(","):
                 imported_name, exported_name = self._parse_export_binding(binding)
-                lines.append(
-                    f"exports[{json.dumps(exported_name)}] = "
-                    f"{temporary_name}[{json.dumps(imported_name)}];"
+                module_prelude.append(
+                    self._property_getter(
+                        "exports",
+                        exported_name,
+                        f"{dependency_reference}[{json.dumps(imported_name)}]",
+                    )
                 )
 
-            return "\n".join(lines)
+            return ""
 
         source = self._EXPORT_FROM_RE.sub(export_from, source)
 
+        def export_star_as_namespace_from(match: re.Match[str]) -> str:
+            _, dependency_reference = add_dependency(match.group("specifier"))
+            exported_name = match.group("name")
+            module_prelude.append(
+                self._property_getter("exports", exported_name, dependency_reference)
+            )
+            return ""
+
+        source = self._EXPORT_STAR_AS_NAMESPACE_FROM_RE.sub(export_star_as_namespace_from, source)
+
         def export_star_from(match: re.Match[str]) -> str:
-            dependency_url = self._resolve_url(match.group("specifier"), module_url)
-            dependencies.append(dependency_url)
-            temporary_name = next_reexport_name()
-            return (
-                f"const {temporary_name} = __require({json.dumps(dependency_url)});\n"
-                f"for (const exportName of Object.keys({temporary_name})) {{\n"
+            _, dependency_reference = add_dependency(match.group("specifier"))
+            post_dependency_prelude.append(
+                f"for (const exportName of Object.keys({dependency_reference})) {{\n"
                 '    if (exportName !== "default") {\n'
-                f"        exports[exportName] = {temporary_name}[exportName];\n"
+                "        Object.defineProperty(exports, exportName, {\n"
+                "            configurable: true,\n"
+                "            enumerable: true,\n"
+                "            get: function () {\n"
+                f"                return {dependency_reference}[exportName];\n"
+                "            },\n"
+                "        });\n"
                 "    }\n"
                 "}"
             )
+            return ""
 
         source = self._EXPORT_STAR_FROM_RE.sub(export_star_from, source)
+
+        def export_default_named_declaration(match: re.Match[str]) -> str:
+            name = match.group("name")
+            exports.append((name, "default"))
+            return f"{match.group('kind')} {name}"
+
+        source = self._EXPORT_DEFAULT_NAMED_DECLARATION_RE.sub(export_default_named_declaration, source)
+
+        def export_default_anonymous_function(match: re.Match[str]) -> str:
+            exports.append(("__phantom_default_export", "default"))
+            async_prefix = match.group("async") or ""
+            return f"const __phantom_default_export = {async_prefix}function"
+
+        source = self._EXPORT_DEFAULT_ANONYMOUS_FUNCTION_RE.sub(export_default_anonymous_function, source)
+
+        def export_default_anonymous_class(match: re.Match[str]) -> str:
+            exports.append(("__phantom_default_export", "default"))
+            return "const __phantom_default_export = class"
+
+        source = self._EXPORT_DEFAULT_ANONYMOUS_CLASS_RE.sub(export_default_anonymous_class, source)
 
         def export_declaration(match: re.Match[str]) -> str:
             name = match.group("name")
@@ -227,36 +297,84 @@ class ModuleLoader:
 
         source = self._EXPORT_DEFAULT_RE.sub(export_default, source)
 
-        assignments = "\n".join(
-            f"exports[{json.dumps(export_name)}] = {local_name};" for local_name, export_name in exports
+        export_prelude = [
+            self._property_getter("exports", export_name, local_name)
+            for local_name, export_name in exports
+        ]
+        module_body = "\n".join(
+            [
+                *export_prelude,
+                *module_prelude,
+                *dependency_execution_prelude,
+                *post_dependency_prelude,
+                source,
+            ]
         )
-        return f"{source}\n{assignments}", dependencies
+        indented_module_body = "\n".join(
+            f"    {line}" if line else "" for line in module_body.splitlines()
+        )
+        transformed_source = "\n".join(
+            [
+                *dependency_declarations,
+                "const __phantom_imports = Object.create(null);",
+                *import_prelude,
+                "with (__phantom_imports) {",
+                indented_module_body,
+                "}",
+            ]
+        )
+        return transformed_source, dependencies
 
-    def _translate_import(self, clause: str, dependency_url: str) -> str:
+    def _translate_import(self, clause: str, dependency_reference: str) -> list[str]:
+        """Create module-local live accessors for one supported import clause."""
         clause = clause.strip()
-        require = f"__require({json.dumps(dependency_url)})"
 
         if clause.startswith("{") and clause.endswith("}"):
-            return f"const {self._translate_named_imports(clause)} = {require};"
+            return self._translate_named_imports(clause, dependency_reference)
         if clause.startswith("* as "):
             namespace = clause.removeprefix("* as ").strip()
             self._require_identifier(namespace, "namespace import")
-            return f"const {namespace} = {require};"
+            return [self._property_getter("__phantom_imports", namespace, dependency_reference)]
         if "," in clause:
             default_name, remainder = clause.split(",", 1)
             self._require_identifier(default_name.strip(), "default import")
-            named_import = self._translate_import(remainder.strip(), dependency_url)
-            return f"const {default_name.strip()} = {require}.default;\n{named_import}"
+            named_import = self._translate_import(remainder.strip(), dependency_reference)
+            return [
+                self._property_getter(
+                    "__phantom_imports", default_name.strip(), f"{dependency_reference}.default"
+                ),
+                *named_import,
+            ]
 
         self._require_identifier(clause, "default import")
-        return f"const {clause} = {require}.default;"
+        return [self._property_getter("__phantom_imports", clause, f"{dependency_reference}.default")]
 
-    def _translate_named_imports(self, clause: str) -> str:
+    def _translate_named_imports(self, clause: str, dependency_reference: str) -> list[str]:
+        """Create live import accessors for a ``{ name as local }`` clause."""
         bindings: list[str] = []
         for binding in clause[1:-1].split(","):
             original_name, local_name = self._parse_import_binding(binding)
-            bindings.append(original_name if original_name == local_name else f"{original_name}: {local_name}")
-        return "{" + ", ".join(bindings) + "}"
+            bindings.append(
+                self._property_getter(
+                    "__phantom_imports",
+                    local_name,
+                    f"{dependency_reference}[{json.dumps(original_name)}]",
+                )
+            )
+        return bindings
+
+    @staticmethod
+    def _property_getter(target: str, property_name: str, expression: str) -> str:
+        """Return JavaScript that exposes ``expression`` as a live accessor."""
+        return (
+            f"Object.defineProperty({target}, {json.dumps(property_name)}, {{\n"
+            "    configurable: true,\n"
+            "    enumerable: true,\n"
+            "    get: function () {\n"
+            f"        return {expression};\n"
+            "    },\n"
+            "});"
+        )
 
     def _parse_import_binding(self, binding: str) -> tuple[str, str]:
         parts = re.split(r"\s+as\s+", binding.strip())

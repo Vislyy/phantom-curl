@@ -45,6 +45,5 @@ htmlcov/
 
 test.py
 
-docs/module-loader-walkthrough.md
 docs/environment-bridge-walkthrough.md
 docs/learning/*.md
