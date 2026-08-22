@@ -11,4 +11,6 @@ Since this library is used for web scraping and bypassing protections, the conce
 
 ## Supported Versions
 
-We only support the latest minor version (e.g., 0.2.x).
+Only the latest published release is supported. Pre-release `0.x` versions may
+change without backward compatibility; security fixes for older pre-releases
+are handled case by case.
